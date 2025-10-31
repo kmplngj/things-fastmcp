@@ -27,6 +27,16 @@ This file tracks the agent's thoughts, ideas, and work flow for the `things-fast
 - Run `ruff check .` and `pytest` after modifications.
 
 ## Log
+### 2025-10-31
+- **Fixed STDIO transport compatibility for Claude Desktop**
+  - Changed default transport from `streamable-http` to `stdio` in fast_server.py
+  - Added THINGS_MCP_TRANSPORT environment variable to allow HTTP transport when needed
+  - HTTP transport (streamable-http) now only used when explicitly requested
+  - Updated README with correct configuration for all MCP clients (Claude Desktop, VS Code, Cursor, Windsurf)
+  - Replaced hardcoded paths with `{{ABSOLUTE_PATH_TO_THINGS_FASTMCP}}` placeholder
+  - Added troubleshooting section and quick setup commands for fish/bash shells
+  - Resolved relative import errors by using proper `uv run server` command instead of `fastmcp run`
+
 ### 2025-10-16
 - **Completed and archived OpenSpec change `remove-legacy-mcp` - Consolidated to FastMCP-only implementation (v2.0.0)**
   - Deleted 5 legacy files: things_server.py, simple_server.py, simple_url_scheme.py, mcp_tools.py, and src/things_mcp/things_server.py
