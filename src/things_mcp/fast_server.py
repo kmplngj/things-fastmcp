@@ -857,8 +857,17 @@ def run_things_mcp_server():
     else:
         logger.info("Things app is running and ready for operations")
 
-    # Run the MCP server with HTTP transport
-    mcp.run(transport="streamable-http")
+    # Determine transport based on environment
+    # Use STDIO for Claude Desktop and other MCP clients (default)
+    # Use HTTP only when explicitly requested via THINGS_MCP_TRANSPORT=http
+    transport = os.getenv("THINGS_MCP_TRANSPORT", "stdio")
+    
+    if transport == "http" or transport == "streamable-http":
+        logger.info("Starting MCP server with HTTP transport on %s:%d", host, get_binding_port())
+        mcp.run(transport="streamable-http")
+    else:
+        logger.info("Starting MCP server with STDIO transport for Claude Desktop")
+        mcp.run(transport="stdio")
 
 if __name__ == "__main__":
     run_things_mcp_server()
