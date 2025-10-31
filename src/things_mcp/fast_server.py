@@ -3,22 +3,19 @@
 Things MCP Server implementation using the FastMCP pattern.
 This provides a more modern and maintainable approach to the Things integration.
 """
-import logging
 import os
-import asyncio
-import traceback
 from functools import lru_cache
 from typing import Dict, Any, Optional, List, Union
 import inspect
 import things
 from dotenv import load_dotenv
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import FastMCP, Context
 import mcp.types as types
 
 # Import supporting modules
 from .formatters import format_todo, format_project, format_area, format_tag
-from .utils import app_state, circuit_breaker, dead_letter_queue, rate_limiter
+from .utils import app_state
 from .url_scheme import (
     add_todo, add_project, update_todo, update_project, show,
     search, launch_things, execute_url
@@ -66,6 +63,7 @@ TOOL_ANNOTATIONS: Dict[str, types.ToolAnnotations] = {
     "get-areas": READ_ONLY_ANNOTATIONS,
     "get-tags": READ_ONLY_ANNOTATIONS,
     "get-tagged-items": READ_ONLY_ANNOTATIONS,
+    "count-items": READ_ONLY_ANNOTATIONS,
     "search-todos": READ_ONLY_ANNOTATIONS,
     "search-advanced": READ_ONLY_ANNOTATIONS,
     "add-todo": ADD_ANNOTATIONS,
@@ -138,6 +136,75 @@ def _error_result(message: str) -> types.CallToolResult:
         content=[types.TextContent(type="text", text=message)],
         isError=True,
     )
+
+
+def _apply_sort_and_limit(items: List[Any], sort_by: Optional[str] = None, limit: Optional[int] = None) -> List[Any]:
+    """
+    Apply sorting and limiting to a list of items.
+    
+    Args:
+        items: List of items to process
+        sort_by: Field to sort by ('title', 'created', 'modified', 'deadline', 'start_date')
+        limit: Maximum number of items to return
+        
+    Returns:
+        Processed list of items
+    """
+    if not items:
+        return items
+    
+    # Sort if requested using a mapping dictionary for cleaner code
+    if sort_by:
+        def get_field_value(item, field: str) -> Any:
+            """Helper to get field value from either object attribute or dict key."""
+            if hasattr(item, field):
+                return getattr(item, field, None) or ''
+            elif isinstance(item, dict):
+                return item.get(field, '') or ''
+            return ''
+        
+        sort_configs = {
+            'title': (lambda x: get_field_value(x, 'title').lower(), False),
+            'created': (lambda x: get_field_value(x, 'created'), True),
+            'modified': (lambda x: get_field_value(x, 'modified'), True),
+            'deadline': (lambda x: get_field_value(x, 'deadline'), True),
+            'start_date': (lambda x: get_field_value(x, 'start_date'), True),
+        }
+        
+        if sort_by in sort_configs:
+            key_func, reverse = sort_configs[sort_by]
+            items = sorted(items, key=key_func, reverse=reverse)
+    
+    # Limit results if requested
+    if limit and limit > 0:
+        items = items[:limit]
+    
+    return items
+
+
+def _format_metadata(total: int, limit: Optional[int] = None, sort_by: Optional[str] = None, extra: str = "") -> str:
+    """
+    Format metadata string for result output.
+    
+    Args:
+        total: Total number of items
+        limit: Limit applied (if any)
+        sort_by: Sort field applied (if any)
+        extra: Additional metadata text
+        
+    Returns:
+        Formatted metadata string
+    """
+    metadata = f"Found {total} item(s)"
+    if extra:
+        metadata += f" {extra}"
+    if limit and total >= limit:
+        metadata += f" (limited to {limit})"
+    if sort_by:
+        metadata += f" sorted by {sort_by}"
+    return metadata
+
+
 # Network binding configuration
 HOST_ENV_VAR = "THINGS_FASTMCP_HOST"
 PORT_ENV_VAR = "THINGS_FASTMCP_PORT"
@@ -222,8 +289,17 @@ mcp = _create_fastmcp_instance()
 # LIST VIEWS
 
 @mcp.tool(name="get-inbox", annotations=TOOL_ANNOTATIONS["get-inbox"])
-def get_inbox() -> str:
-    """Get todos from Inbox"""
+async def get_inbox(limit: Optional[int] = None, sort_by: Optional[str] = None, ctx: Optional[Context] = None) -> str:
+    """
+    Get todos from Inbox
+    
+    IMPORTANT: Use the 'limit' parameter to avoid overwhelming the context window.
+    For targeted queries (e.g., "find 10 items with URLs"), always specify a limit.
+    
+    Args:
+        limit: Maximum number of results to return. Recommended: 10-50 for focused tasks. (optional)
+        sort_by: Sort results by field - 'title', 'created', 'modified', 'deadline', 'start_date' (optional)
+    """
     import time
     start_time = time.time()
     log_operation_start("get-inbox")
@@ -235,17 +311,42 @@ def get_inbox() -> str:
             log_operation_end("get-inbox", True, time.time() - start_time, count=0)
             return "No items found in Inbox"
 
+        total_count = len(todos)
+        
+        # Warn if returning large result set without limit
+        if ctx and not limit and total_count > 20:
+            await ctx.warning(
+                f"Returning all {total_count} inbox items without a limit. "
+                f"Consider using limit parameter (e.g., limit=10) to reduce context window usage.",
+                extra={"total_items": total_count, "limit_used": False}
+            )
+
+        # Apply sorting and limiting
+        todos = _apply_sort_and_limit(todos, sort_by, limit)
+        
         formatted_todos = [format_todo(todo) for todo in todos]
         log_operation_end("get-inbox", True, time.time() - start_time, count=len(todos))
-        return "\n\n---\n\n".join(formatted_todos)
+        
+        result = "\n\n---\n\n".join(formatted_todos)
+        metadata = _format_metadata(total_count, limit, sort_by, extra=f"from {total_count} total")
+        return f"{metadata}\n\n{result}"
     except Exception as e:
         log_operation_end("get-inbox", False, time.time() - start_time, error=str(e))
         raise
 
 @mcp.tool(name="get-today", annotations=TOOL_ANNOTATIONS["get-today"])
 @cached(ttl=CACHE_TTL.get("today", 30))
-def get_today() -> str:
-    """Get todos due today"""
+async def get_today(limit: Optional[int] = None, sort_by: Optional[str] = None, ctx: Optional[Context] = None) -> str:
+    """
+    Get todos due today
+    
+    IMPORTANT: Use the 'limit' parameter to avoid overwhelming the context window.
+    For targeted queries, always specify a limit.
+    
+    Args:
+        limit: Maximum number of results to return. Recommended: 10-50 for focused tasks. (optional)
+        sort_by: Sort results by field - 'title', 'created', 'modified', 'deadline', 'start_date' (optional)
+    """
     import time
     start_time = time.time()
     log_operation_start("get-today")
@@ -257,76 +358,204 @@ def get_today() -> str:
             log_operation_end("get-today", True, time.time() - start_time, count=0)
             return "No items due today"
 
+        total_count = len(todos)
+        
+        # Warn if returning large result set without limit
+        if ctx and not limit and total_count > 20:
+            await ctx.warning(
+                f"Returning all {total_count} today items without a limit. "
+                f"Consider using limit parameter (e.g., limit=10) to reduce context window usage.",
+                extra={"total_items": total_count, "limit_used": False}
+            )
+
+        # Apply sorting and limiting
+        todos = _apply_sort_and_limit(todos, sort_by, limit)
+        
         formatted_todos = [format_todo(todo) for todo in todos]
         log_operation_end("get-today", True, time.time() - start_time, count=len(todos))
-        return "\n\n---\n\n".join(formatted_todos)
+        
+        result = "\n\n---\n\n".join(formatted_todos)
+        metadata = _format_metadata(total_count, limit, sort_by, extra=f"from {total_count} total")
+        return f"{metadata}\n\n{result}"
     except Exception as e:
         log_operation_end("get-today", False, time.time() - start_time, error=str(e))
         raise
 
 @mcp.tool(name="get-upcoming", annotations=TOOL_ANNOTATIONS["get-upcoming"])
-def get_upcoming() -> str:
-    """Get upcoming todos"""
+async def get_upcoming(limit: Optional[int] = None, sort_by: Optional[str] = None, ctx: Optional[Context] = None) -> str:
+    """
+    Get upcoming todos
+    
+    IMPORTANT: Use the 'limit' parameter to avoid overwhelming the context window.
+    For targeted queries, always specify a limit.
+    
+    Args:
+        limit: Maximum number of results to return. Recommended: 10-50 for focused tasks. (optional)
+        sort_by: Sort results by field - 'title', 'created', 'modified', 'deadline', 'start_date' (optional)
+    """
     todos = things.upcoming()
 
     if not todos:
         return "No upcoming items"
 
+    total_count = len(todos)
+    
+    # Warn if returning large result set without limit
+    if ctx and not limit and total_count > 20:
+        await ctx.warning(
+            f"Returning all {total_count} upcoming items without a limit. "
+            f"Consider using limit parameter (e.g., limit=10) to reduce context window usage.",
+            extra={"total_items": total_count, "limit_used": False}
+        )
+
+    # Apply sorting and limiting
+    todos = _apply_sort_and_limit(todos, sort_by, limit)
+    
     formatted_todos = [format_todo(todo) for todo in todos]
-    return "\n\n---\n\n".join(formatted_todos)
+    result = "\n\n---\n\n".join(formatted_todos)
+    metadata = _format_metadata(total_count, limit, sort_by, extra=f"from {total_count} total")
+    return f"{metadata}\n\n{result}"
 
 @mcp.tool(name="get-anytime", annotations=TOOL_ANNOTATIONS["get-anytime"])
-def get_anytime() -> str:
-    """Get todos from Anytime list"""
+async def get_anytime(limit: Optional[int] = None, sort_by: Optional[str] = None, ctx: Optional[Context] = None) -> str:
+    """
+    Get todos from Anytime list
+    
+    IMPORTANT: Use the 'limit' parameter to avoid overwhelming the context window.
+    For targeted queries, always specify a limit.
+    
+    Args:
+        limit: Maximum number of results to return. Recommended: 10-50 for focused tasks. (optional)
+        sort_by: Sort results by field - 'title', 'created', 'modified', 'deadline', 'start_date' (optional)
+    """
     todos = things.anytime()
 
     if not todos:
         return "No items in Anytime list"
 
+    total_count = len(todos)
+    
+    # Warn if returning large result set without limit
+    if ctx and not limit and total_count > 20:
+        await ctx.warning(
+            f"Returning all {total_count} anytime items without a limit. "
+            f"Consider using limit parameter (e.g., limit=10) to reduce context window usage.",
+            extra={"total_items": total_count, "limit_used": False}
+        )
+
+    # Apply sorting and limiting
+    todos = _apply_sort_and_limit(todos, sort_by, limit)
+    
     formatted_todos = [format_todo(todo) for todo in todos]
-    return "\n\n---\n\n".join(formatted_todos)
+    result = "\n\n---\n\n".join(formatted_todos)
+    metadata = _format_metadata(total_count, limit, sort_by, extra=f"from {total_count} total")
+    return f"{metadata}\n\n{result}"
 
 @mcp.tool(name="get-someday", annotations=TOOL_ANNOTATIONS["get-someday"])
-def get_someday() -> str:
-    """Get todos from Someday list"""
+async def get_someday(limit: Optional[int] = None, sort_by: Optional[str] = None, ctx: Optional[Context] = None) -> str:
+    """
+    Get todos from Someday list
+    
+    IMPORTANT: Use the 'limit' parameter to avoid overwhelming the context window.
+    For targeted queries, always specify a limit.
+    
+    Args:
+        limit: Maximum number of results to return. Recommended: 10-50 for focused tasks. (optional)
+        sort_by: Sort results by field - 'title', 'created', 'modified', 'deadline', 'start_date' (optional)
+    """
     todos = things.someday()
 
     if not todos:
         return "No items in Someday list"
 
+    total_count = len(todos)
+    
+    # Warn if returning large result set without limit
+    if ctx and not limit and total_count > 20:
+        await ctx.warning(
+            f"Returning all {total_count} someday items without a limit. "
+            f"Consider using limit parameter (e.g., limit=10) to reduce context window usage.",
+            extra={"total_items": total_count, "limit_used": False}
+        )
+
+    # Apply sorting and limiting
+    todos = _apply_sort_and_limit(todos, sort_by, limit)
+    
     formatted_todos = [format_todo(todo) for todo in todos]
-    return "\n\n---\n\n".join(formatted_todos)
+    result = "\n\n---\n\n".join(formatted_todos)
+    metadata = _format_metadata(total_count, limit, sort_by, extra=f"from {total_count} total")
+    return f"{metadata}\n\n{result}"
 
 @mcp.tool(name="get-logbook", annotations=TOOL_ANNOTATIONS["get-logbook"])
-def get_logbook(period: str = "7d", limit: int = 50) -> str:
+async def get_logbook(period: str = "7d", limit: int = 50, sort_by: Optional[str] = None, ctx: Optional[Context] = None) -> str:
     """
     Get completed todos from Logbook, defaults to last 7 days
 
+    IMPORTANT: Use the 'limit' parameter to avoid overwhelming the context window.
+    For targeted queries, always specify a limit.
+
     Args:
         period: Time period to look back (e.g., '3d', '1w', '2m', '1y'). Defaults to '7d'
-        limit: Maximum number of entries to return. Defaults to 50
+        limit: Maximum number of entries to return. Defaults to 50. Recommended: 10-50 for focused tasks.
+        sort_by: Sort results by field - 'title', 'created', 'modified', 'deadline', 'start_date' (optional)
     """
     todos = things.last(period, status='completed')
 
     if not todos:
         return "No completed items found"
 
-    if todos and len(todos) > limit:
-        todos = todos[:limit]
+    total_count = len(todos)
+    
+    # Warn if returning large result set without reasonable limit
+    if ctx and limit and limit > 50:
+        await ctx.warning(
+            f"Returning {limit} logbook items. Large limits may overwhelm the context window. "
+            f"Consider using smaller limit (e.g., limit=20) for better performance.",
+            extra={"total_items": total_count, "limit_used": limit}
+        )
+
+    # Apply sorting and limiting
+    todos = _apply_sort_and_limit(todos, sort_by, limit)
 
     formatted_todos = [format_todo(todo) for todo in todos]
-    return "\n\n---\n\n".join(formatted_todos)
+    result = "\n\n---\n\n".join(formatted_todos)
+    metadata = _format_metadata(total_count, limit, sort_by, f"from last {period}")
+    return f"{metadata}\n\n{result}"
 
 @mcp.tool(name="get-trash", annotations=TOOL_ANNOTATIONS["get-trash"])
-def get_trash() -> str:
-    """Get trashed todos"""
+async def get_trash(limit: Optional[int] = None, sort_by: Optional[str] = None, ctx: Optional[Context] = None) -> str:
+    """
+    Get trashed todos
+    
+    IMPORTANT: Use the 'limit' parameter to avoid overwhelming the context window.
+    For targeted queries, always specify a limit.
+    
+    Args:
+        limit: Maximum number of results to return. Recommended: 10-50 for focused tasks. (optional)
+        sort_by: Sort results by field - 'title', 'created', 'modified', 'deadline', 'start_date' (optional)
+    """
     todos = things.trash()
 
     if not todos:
         return "No items in trash"
 
+    total_count = len(todos)
+    
+    # Warn if returning large result set without limit
+    if ctx and not limit and total_count > 20:
+        await ctx.warning(
+            f"Returning all {total_count} trash items without a limit. "
+            f"Consider using limit parameter (e.g., limit=10) to reduce context window usage.",
+            extra={"total_items": total_count, "limit_used": False}
+        )
+
+    # Apply sorting and limiting
+    todos = _apply_sort_and_limit(todos, sort_by, limit)
+
     formatted_todos = [format_todo(todo) for todo in todos]
-    return "\n\n---\n\n".join(formatted_todos)
+    result = "\n\n---\n\n".join(formatted_todos)
+    metadata = _format_metadata(total_count, limit, sort_by, extra=f"from {total_count} total")
+    return f"{metadata}\n\n{result}"
 
 # BASIC TODO OPERATIONS
 
@@ -343,7 +572,8 @@ def get_todos(
     """
     if project_uuid:
         project = things.get(project_uuid)
-        if not project or project.get('type') != 'project':
+        # things.get() returns a dict or None (type checker may not know this)
+        if not project or (isinstance(project, dict) and project.get('type') != 'project'):
             return _error_result(f"Error: Invalid project UUID '{project_uuid}'")
 
     todos = things.todos(project=project_uuid, start=None)
@@ -422,33 +652,123 @@ def get_tagged_items(tag: str) -> str:
 
 # SEARCH OPERATIONS
 
+@mcp.tool(name="count-items", annotations=TOOL_ANNOTATIONS["count-items"])
+def count_items() -> str:
+    """
+    Get counts of items in each main Things area (lightweight alternative to fetching full data)
+    
+    Use this tool to check the size of different areas before deciding whether to use
+    limit parameters on other query tools. This helps prevent context window overflow.
+    
+    Returns counts for:
+    - Inbox: Items in the inbox
+    - Today: Items scheduled for today
+    - Upcoming: Items with future start dates
+    - Anytime: Items without specific scheduling
+    - Someday: Items in the someday list
+    - Logbook: Completed/cancelled items
+    - Trash: Deleted items
+    """
+    try:
+        counts = {
+            'inbox': len(things.inbox()),
+            'today': len(things.today()),
+            'upcoming': len(things.upcoming()),
+            'anytime': len(things.anytime()),
+            'someday': len(things.someday()),
+            'logbook': len(things.logbook()),
+            'trash': len(things.trash())
+        }
+        
+        result_lines = [
+            "Item counts by area:",
+            f"  Inbox: {counts['inbox']} items",
+            f"  Today: {counts['today']} items",
+            f"  Upcoming: {counts['upcoming']} items",
+            f"  Anytime: {counts['anytime']} items",
+            f"  Someday: {counts['someday']} items",
+            f"  Logbook: {counts['logbook']} items",
+            f"  Trash: {counts['trash']} items",
+            "",
+            f"Total items: {sum(counts.values())}"
+        ]
+        
+        # Add recommendations based on counts
+        large_areas = [area for area, count in counts.items() if count > 20]
+        if large_areas:
+            result_lines.extend([
+                "",
+                f"Recommendation: Use 'limit' parameter when querying {', '.join(large_areas)} "
+                f"to prevent context window overflow."
+            ])
+        
+        return "\n".join(result_lines)
+    except Exception as e:
+        return _error_result(f"Error getting item counts: {str(e)}")
+
 @mcp.tool(name="search-todos", annotations=TOOL_ANNOTATIONS["search-todos"])
-def search_todos(query: str) -> str:
+async def search_todos(
+    query: str,
+    limit: Optional[int] = None,
+    sort_by: Optional[str] = None,
+    ctx: Optional[Context] = None
+) -> str:
     """
     Search todos by title or notes
+    
+    IMPORTANT: Use the 'limit' parameter to prevent overwhelming the context window when
+    searching across large todo collections. Without a limit, all matching results are returned.
 
     Args:
         query: Search term to look for in todo titles and notes
+        limit: Maximum number of results to return (optional, recommended for large result sets)
+        sort_by: Sort results by field - 'title', 'created', 'modified', 'deadline', 'start_date' (optional)
+        ctx: Context object for progress reporting (internal use)
     """
     todos = things.search(query)
 
     if not todos:
         return f"No todos found matching '{query}'"
 
+    # Store total count before limiting
+    total_count = len(todos)
+    
+    # Warn if returning large result set without limit
+    if ctx and not limit and total_count > 20:
+        await ctx.warning(
+            f"Search returned {total_count} items without a limit. "
+            "Consider using the 'limit' parameter to reduce context window usage."
+        )
+
+    # Apply sorting and limiting using the shared helper
+    todos = _apply_sort_and_limit(todos, sort_by, limit)
+
     formatted_todos = [format_todo(todo) for todo in todos]
-    return "\n\n---\n\n".join(formatted_todos)
+    result = "\n\n---\n\n".join(formatted_todos)
+    
+    # Add metadata with total count information
+    extra_info = f"from {total_count} total" if limit and total_count > len(todos) else ""
+    metadata = _format_metadata(len(todos), limit, sort_by, extra=extra_info)
+    
+    return f"{metadata}\n\n{result}"
 
 @mcp.tool(name="search-advanced", annotations=TOOL_ANNOTATIONS["search-advanced"])
-def search_advanced(
+async def search_advanced(
     status: Optional[str] = None,
     start_date: Optional[str] = None,
     deadline: Optional[str] = None,
     tag: Optional[str] = None,
     area: Optional[str] = None,
-    type: Optional[str] = None
+    type: Optional[str] = None,
+    limit: Optional[int] = None,
+    sort_by: Optional[str] = None,
+    ctx: Optional[Context] = None
 ) -> str:
     """
     Advanced todo search with multiple filters
+    
+    IMPORTANT: Use the 'limit' parameter to prevent overwhelming the context window when
+    searching across large todo collections. Without a limit, all matching results are returned.
 
     Args:
         status: Filter by todo status (incomplete/completed/canceled)
@@ -457,6 +777,9 @@ def search_advanced(
         tag: Filter by tag
         area: Filter by area UUID
         type: Filter by item type (to-do/project/heading)
+        limit: Maximum number of results to return (optional, recommended for large result sets)
+        sort_by: Sort results by field - 'title', 'created', 'modified', 'deadline', 'start_date' (optional)
+        ctx: Context object for progress reporting (internal use)
     """
     # Build filter parameters
     kwargs = {}
@@ -482,8 +805,27 @@ def search_advanced(
         if not todos:
             return "No items found matching your search criteria"
 
+        # Store total count before limiting
+        total_count = len(todos)
+        
+        # Warn if returning large result set without limit
+        if ctx and not limit and total_count > 20:
+            await ctx.warning(
+                f"Advanced search returned {total_count} items without a limit. "
+                "Consider using the 'limit' parameter to reduce context window usage."
+            )
+
+        # Apply sorting and limiting using the shared helper
+        todos = _apply_sort_and_limit(todos, sort_by, limit)
+
         formatted_todos = [format_todo(todo) for todo in todos]
-        return "\n\n---\n\n".join(formatted_todos)
+        result = "\n\n---\n\n".join(formatted_todos)
+        
+        # Add metadata with total count information
+        extra_info = f"from {total_count} total" if limit and total_count > len(todos) else ""
+        metadata = _format_metadata(len(todos), limit, sort_by, extra=extra_info)
+        
+        return f"{metadata}\n\n{result}"
     except Exception as e:
         return _error_result(f"Error in advanced search: {str(e)}")
 
@@ -784,12 +1126,18 @@ def search_all_items(query: str) -> str:
         return _error_result(f"Error searching: {str(e)}")
 
 @mcp.tool(name="get-recent", annotations=TOOL_ANNOTATIONS["get-recent"])
-def get_recent(period: str) -> str:
+def get_recent(
+    period: str,
+    limit: Optional[int] = None,
+    sort_by: Optional[str] = None
+) -> str:
     """
     Get recently created items
 
     Args:
         period: Time period (e.g., '3d', '1w', '2m', '1y')
+        limit: Maximum number of results to return (optional)
+        sort_by: Sort results by field - 'title', 'created', 'modified', 'deadline', 'start_date' (optional)
     """
     try:
         # Check if period format is valid
@@ -802,6 +1150,23 @@ def get_recent(period: str) -> str:
         if not items:
             return f"No items found in the last {period}"
 
+        # Sort if requested
+        if sort_by:
+            if sort_by == 'title':
+                items.sort(key=lambda x: x.get('title', '').lower())
+            elif sort_by == 'created':
+                items.sort(key=lambda x: x.get('created', ''), reverse=True)
+            elif sort_by == 'modified':
+                items.sort(key=lambda x: x.get('modified', ''), reverse=True)
+            elif sort_by == 'deadline':
+                items.sort(key=lambda x: x.get('deadline', '') or '', reverse=True)
+            elif sort_by == 'start_date':
+                items.sort(key=lambda x: x.get('start_date', '') or '', reverse=True)
+
+        # Limit results if requested
+        if limit and limit > 0:
+            items = items[:limit]
+
         formatted_items = []
         for item in items:
             if item.get('type') == 'to-do':
@@ -809,7 +1174,17 @@ def get_recent(period: str) -> str:
             elif item.get('type') == 'project':
                 formatted_items.append(format_project(item, include_items=False))
 
-        return "\n\n---\n\n".join(formatted_items)
+        result = "\n\n---\n\n".join(formatted_items)
+        
+        # Add metadata about results
+        total_found = len(items)
+        metadata = f"Found {total_found} item(s) from last {period}"
+        if limit and len(items) >= limit:
+            metadata += f" (limited to {limit})"
+        if sort_by:
+            metadata += f" sorted by {sort_by}"
+        
+        return f"{metadata}\n\n{result}"
     except Exception as e:
         logger.error(f"Error getting recent items: {str(e)}")
         return _error_result(f"Error getting recent items: {str(e)}")
