@@ -71,6 +71,7 @@ This MCP server provides seamless integration between Things 3 and AI assistants
    ```bash
    git clone https://github.com/CaseyRo/things-fastmcp.git
    cd things-fastmcp
+   uv venv
    uv pip install -e .
    ```
 
@@ -79,7 +80,7 @@ This MCP server provides seamless integration between Things 3 and AI assistants
 4. **Configure Authentication**
 
    ```bash
-   python configure_token.py
+   uv run configure_token.py
    ```
 
    Follow the prompts to set up your Things 3 authentication token.
@@ -117,12 +118,29 @@ Uses the [MCP development helper](https://github.com/anthropics/mcp-cli#developm
 **Environment Variables:**
 
 ```bash
-# Bind to all interfaces (⚠️ exposes server to network)
+# Bind to all interfaces (⚠️ exposes server to network - only for HTTP transport)
 export THINGS_FASTMCP_HOST=0.0.0.0
 
-# Use custom port
+# Use custom port (only for HTTP transport)
 export THINGS_FASTMCP_PORT=9000
+
+# Use HTTP transport instead of STDIO (for remote access)
+export THINGS_MCP_TRANSPORT=http
 ```
+
+**Transport Configuration:**
+
+The server supports two transport modes:
+
+- **STDIO (default)**: For local MCP clients like Claude Desktop, VS Code, Cursor, Windsurf
+  - Communicates via standard input/output
+  - Most secure (no network exposure)
+  - Automatically selected when running via `uv run server`
+
+- **HTTP**: For remote access or web-based integrations
+  - Runs as a web service on `http://127.0.0.1:8009`
+  - Enable with: `export THINGS_MCP_TRANSPORT=http`
+  - Configure host/port with THINGS_FASTMCP_HOST and THINGS_FASTMCP_PORT
 
 **Using .env File:**
 
@@ -223,11 +241,163 @@ Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_
 {
   "mcpServers": {
     "things": {
-      "command": "uv run server"
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory",
+        "{{ABSOLUTE_PATH_TO_THINGS_FASTMCP}}",
+        "server"
+      ]
     }
   }
 }
 ```
+
+**Important:** Replace `{{ABSOLUTE_PATH_TO_THINGS_FASTMCP}}` with the actual absolute path to your cloned repository (e.g., `/Users/yourname/Repositories/things-fastmcp`).
+
+**Quick Setup:**
+
+```fish
+# For fish shell
+printf '%s\n' '{' '  "mcpServers": {' '    "Things 3": {' '      "command": "uv",' '      "args": [' '        "run",' '        "--directory",' '        "/absolute/path/to/things-fastmcp",' '        "server"' '      ]' '    }' '  }' '}' > ~/Library/Application\ Support/Claude/claude_desktop_config.json
+```
+
+```bash
+# For bash/zsh
+cat > ~/Library/Application\ Support/Claude/claude_desktop_config.json << 'EOF'
+{
+  "mcpServers": {
+    "Things 3": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory",
+        "/absolute/path/to/things-fastmcp",
+        "server"
+      ]
+    }
+  }
+}
+EOF
+```
+
+After updating the config:
+1. Quit Claude Desktop completely (Cmd+Q)
+2. Relaunch Claude Desktop
+3. Look for the 🔌 MCP icon in a new conversation
+4. The Things server should appear in the connected servers list
+
+**Troubleshooting:**
+- If you see "Server disconnected", check the logs: `tail -f ~/Library/Logs/Claude/mcp*.log`
+- Make sure `uv` is installed and in your PATH: `which uv`
+- Verify the repository path is absolute and correct
+
+### VS Code with GitHub Copilot
+
+Add to your VS Code settings (`.vscode/settings.json` in your workspace or global User settings):
+
+```json
+{
+  "github.copilot.chat.mcp.servers": {
+    "things": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory",
+        "{{ABSOLUTE_PATH_TO_THINGS_FASTMCP}}",
+        "server"
+      ]
+    }
+  }
+}
+```
+
+**Important:** Replace `{{ABSOLUTE_PATH_TO_THINGS_FASTMCP}}` with the actual absolute path to your cloned repository.
+
+After updating:
+1. Reload VS Code window (Cmd+Shift+P → "Developer: Reload Window")
+2. Open GitHub Copilot Chat
+3. The Things MCP tools will be available for use in conversations
+
+### Cursor
+
+Add to your Cursor config (`~/.cursor/mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "things": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory",
+        "{{ABSOLUTE_PATH_TO_THINGS_FASTMCP}}",
+        "server"
+      ]
+    }
+  }
+}
+```
+
+**Important:** Replace `{{ABSOLUTE_PATH_TO_THINGS_FASTMCP}}` with the actual absolute path to your cloned repository.
+
+After updating:
+1. Restart Cursor
+2. Open a new chat session
+3. The Things MCP tools will be available
+
+### Windsurf (Claude Code)
+
+Add to your Windsurf config (`~/Library/Application Support/Windsurf/User/globalStorage/mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "things": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory",
+        "{{ABSOLUTE_PATH_TO_THINGS_FASTMCP}}",
+        "server"
+      ]
+    }
+  }
+}
+```
+
+**Important:** Replace `{{ABSOLUTE_PATH_TO_THINGS_FASTMCP}}` with the actual absolute path to your cloned repository.
+
+After updating:
+1. Restart Windsurf
+2. Open a new Cascade or Chat session
+3. The Things MCP tools will be available
+
+### Testing Your Configuration
+
+Once configured in any client, test the connection by asking:
+
+```
+Can you show me my inbox tasks?
+```
+
+The AI should use the `get-inbox` tool to retrieve your Things 3 inbox items.
+
+### Troubleshooting Configuration
+
+**MCP server not appearing:**
+- Verify the path in your config points to the correct repository location
+- Check that `uv` is installed and in your PATH: `which uv`
+- Ensure Things 3 is running and accessible
+- Review the MCP server logs (location varies by client)
+
+**Permission errors:**
+- Verify Things 3 has automation permissions (System Preferences → Security & Privacy)
+- Check that the authentication token is configured: `uv run configure_token.py`
+
+**Connection issues:**
+- Make sure no other process is using port 8009
+- Check environment variables if you've customized THINGS_FASTMCP_HOST or THINGS_FASTMCP_PORT
 
 ### MCP Client Metadata
 
