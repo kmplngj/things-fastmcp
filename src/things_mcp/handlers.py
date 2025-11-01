@@ -1,5 +1,5 @@
 import logging
-from typing import List, Dict, Any, Optional, Callable
+from typing import Dict, Any
 import things
 import mcp.types as types
 import traceback
@@ -10,7 +10,7 @@ import time
 from .applescript_bridge import run_applescript
 
 # Import reliability enhancements
-from .utils import app_state, circuit_breaker, dead_letter_queue, rate_limiter, validate_tool_registration
+from .utils import app_state, circuit_breaker, dead_letter_queue
 
 logger = logging.getLogger(__name__)
 
@@ -113,8 +113,6 @@ async def handle_tool_call(
     Attempts to execute the requested Things action with enhanced reliability.
     Uses circuit breaker, app state management, and retry logic for resilience.
     """
-    # Import url_scheme inside the function to avoid scope issues
-    import url_scheme
     try:
         # List view handlers
         if name in ["get-inbox", "get-today", "get-upcoming", "get-anytime",
@@ -152,7 +150,7 @@ async def handle_tool_call(
 
             if project_uuid:
                 project = things.get(project_uuid)
-                if not project or project.get('type') != 'project':
+                if not project or not isinstance(project, dict) or project.get('type') != 'project':
                     return [types.TextContent(type="text",
                                               text=f"Error: Invalid project UUID '{project_uuid}'")]
 
@@ -302,7 +300,6 @@ async def handle_tool_call(
             # Get other parameters
             when = arguments.get("when")
             tags = arguments.get("tags")
-            list_title = arguments.get("list_title")
             
             # Import the AppleScript bridge
             from . import applescript_bridge
@@ -433,7 +430,6 @@ async def handle_tool_call(
             }
             
             from . import applescript_bridge
-            import url_scheme
             
             # Special tag handling
             tag_update_needed = "tags" in arguments and arguments["tags"] is not None
@@ -574,7 +570,7 @@ async def handle_tool_call(
                     
                 # Approach 2: If URL scheme failed, try direct AppleScript
                 if not success:
-                    logger.info(f"Falling back to AppleScript for tag update")
+                    logger.info("Falling back to AppleScript for tag update")
                     success = retry_operation(
                         lambda: applescript_bridge.update_todo_direct(**params),
                         operation_name="update-todo-tags-direct",
@@ -591,7 +587,7 @@ async def handle_tool_call(
                 
                 # If the AppleScript update failed and there are tags to update, try URL scheme
                 if not success and tag_update_needed:
-                    logger.info(f"AppleScript failed, trying URL scheme for tag update")
+                    logger.info("AppleScript failed, trying URL scheme for tag update")
                     url = url_scheme.update_todo(**params)
                     success = retry_operation(
                         lambda: url_scheme.execute_url(url),

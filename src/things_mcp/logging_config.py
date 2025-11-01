@@ -5,7 +5,6 @@ Provides structured logging with multiple outputs and log levels.
 """
 import logging
 import logging.handlers
-import os
 import json
 import re
 from datetime import datetime

@@ -5,7 +5,7 @@ Ensures tags exist before applying them.
 """
 import subprocess
 import logging
-from typing import List, Optional
+from typing import List
 
 logger = logging.getLogger(__name__)
 
@@ -44,9 +44,9 @@ def ensure_tags_exist(tags: List[str]) -> bool:
                 '  if not tagExists then',
                 '    try',
                 '      make new tag with properties {name:tagName}',
-                f'      log "Created tag: " & tagName',
+                '      log "Created tag: " & tagName',
                 '    on error',
-                f'      log "Failed to create tag: " & tagName',
+                '      log "Failed to create tag: " & tagName',
                 '    end try',
                 '  end if'
             ])

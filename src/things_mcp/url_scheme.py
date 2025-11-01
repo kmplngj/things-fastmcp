@@ -1,14 +1,12 @@
 import urllib.parse
 import webbrowser
-import things
 import subprocess
 import platform
 import random
 import time
 import logging
-import json
-from typing import Optional, Dict, Any, Union, Callable
-from .utils import app_state, circuit_breaker, dead_letter_queue, rate_limiter, is_things_running
+from typing import Optional, Dict, Any, Union
+from .utils import circuit_breaker, rate_limiter, is_things_running
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +20,7 @@ def launch_things() -> bool:
         if is_things_running():
             return True
             
-        result = subprocess.run(
+        subprocess.run(
             ['open', '-a', 'Things3'],
             capture_output=True,
             text=True,
@@ -167,7 +165,7 @@ def construct_url(command: str, params: Dict[str, Any]) -> str:
             params['auth-token'] = token
             logger.debug(f"Auth token from config used for {command} operation")
         else:
-            logger.warning(f"No Things auth token found in config. URL may not work without a token.")
+            logger.warning("No Things auth token found in config. URL may not work without a token.")
             # Note: We continue without a token, which may cause the operation to fail
     except Exception as e:
         logger.error(f"Error getting auth token: {str(e)}")

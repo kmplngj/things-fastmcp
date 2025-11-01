@@ -7,9 +7,8 @@ import logging
 import os
 import platform
 import subprocess
-import urllib.parse
 import mcp.types as types
-from typing import Dict, Any, Optional, Callable, List, Union
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -119,6 +118,7 @@ def validate_tool_registration(tools: list[types.Tool]) -> bool:
         # Basic parameter validation could be added here
         # This would depend on your tool schema requirements
     
+    logger.info(f"All {len(tools)} tools are properly registered")
     return True
 
 
@@ -227,7 +227,7 @@ class DeadLetterQueue:
         for entry in self.queue:
             try:
                 url = construct_url(entry["operation"], entry["params"])
-                result = retry_operation(lambda: execute_url(url))
+                result = execute_url(url)
                 
                 if result:
                     success_count += 1
@@ -330,27 +330,6 @@ def detect_things_version():
         logger.error(f"Error detecting Things version: {str(e)}")
     
     return None
-
-
-def validate_tool_registration(tool_list):
-    """Validate that all tools are properly registered"""
-    required_tools = [
-        "get-inbox", "get-today", "get-upcoming", "get-anytime",
-        "get-someday", "get-logbook", "get-trash", "get-todos",
-        "get-projects", "get-areas", "get-tags", "get-tagged-items",
-        "search-todos", "search-advanced", "get-recent", "add-todo",
-        "add-project", "update-todo", "update-project", "show-item"
-    ]
-    
-    tool_names = [t.name for t in tool_list]
-    missing_tools = [tool for tool in required_tools if tool not in tool_names]
-    
-    if missing_tools:
-        logger.error(f"Missing tool registrations: {missing_tools}")
-        return False
-    
-    logger.info(f"All {len(tool_list)} tools are properly registered")
-    return True
 
 
 # Create global instances

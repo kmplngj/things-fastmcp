@@ -31,10 +31,13 @@ This MCP server provides seamless integration between Things 3 and AI assistants
 
 - **List Access**: Inbox, Today, Upcoming, Anytime, Someday, Logbook, and Trash
 - **Task Management**: Create, update, search, and organize todos with full metadata
+- **Checklist Management**: View, add, update checklist items; find todos with checklists
 - **Project & Area Management**: Organize tasks into projects and areas with nesting support
+- **Heading Support**: Add organizational headings to projects; view hierarchical structure
 - **Tag Operations**: Create, assign, and filter by tags (auto-creates missing tags)
-- **Checklist Support**: Include checklist items in task creation
-- **Advanced Search**: Filter by status, dates, tags, areas, and custom queries
+- **Deadline Tracking**: Find overdue items, get upcoming deadlines, set/clear deadlines
+- **Advanced Search**: Filter by type, status, deadline, tags, areas, and custom queries
+- **Smart Counting**: Check item counts before fetching to manage context window
 
 ### 🚀 Reliability Features
 
@@ -164,7 +167,7 @@ THINGS_FASTMCP_HOST=0.0.0.0 THINGS_FASTMCP_PORT=9000 uv run server
 
 ## Available MCP Tools
 
-The server exposes 19 tools organized into logical groups:
+The server exposes 31 tools organized into logical groups:
 
 ### 📥 List Views
 
@@ -182,12 +185,22 @@ The server exposes 19 tools organized into logical groups:
 - `add-todo` - Create new tasks with full metadata
 - `update-todo` - Modify existing tasks
 
+### ✅ Checklist Operations
+
+- `get-checklist-items` - Retrieve checklist items for a todo
+- `add-checklist-item` - Add new checklist items to a todo
+- `update-checklist-item` - Replace entire checklist for a todo
+- `get-todos-with-checklists` - Find all todos containing checklists
+
 ### 📁 Project & Area Management
 
 - `get-projects` - List all projects
 - `get-areas` - List all areas
 - `add-project` - Create new projects
 - `update-project` - Modify existing projects
+- `get-project-structure` - View hierarchical project structure with headings
+- `add-heading` - Add organizational headings to projects
+- `move-todo-under-heading` - Reorganize todos by moving them under headings
 
 ### 🏷️ Tag Operations
 
@@ -196,15 +209,26 @@ The server exposes 19 tools organized into logical groups:
 
 ### 🔍 Search & Discovery
 
-- `search-todos` - Search by title or notes
+- `search-todos` - Search by title or notes (supports type, status, deadline filters)
 - `search-advanced` - Multi-criteria filtering
 - `search-items` - Open search in Things app
 - `show-item` - Display specific item or list in Things
 
-### 📊 Diagnostics
+### ⏰ Deadline Management
+
+- `get-overdue-items` - Find items with past deadlines (shows days overdue)
+- `get-items-due-soon` - Get items with deadlines in next N days (color-coded urgency)
+- `set-deadline` - Set or update deadline (supports 'today', 'tomorrow', ISO dates, 'none')
+
+### 📊 Diagnostics & Helpers
 
 - `get-recent` - Recently created items
 - `get-cache-stats` - Cache performance metrics
+- `count-items` - Get counts for all main areas (lightweight)
+- `count-search` - Count search results before fetching
+- `count-tagged-items` - Count items with specific tag
+- `count-project-items` - Count items in project
+- `count-advanced` - Count advanced search results
 
 Each tool includes detailed docstrings visible to AI assistants, with parameter descriptions and usage examples.
 

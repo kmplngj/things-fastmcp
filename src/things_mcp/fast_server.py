@@ -10,8 +10,12 @@ import inspect
 import things
 from dotenv import load_dotenv
 
-from mcp.server.fastmcp import FastMCP, Context
+from fastmcp import FastMCP, Context
 import mcp.types as types
+
+# Import FastMCP middleware for performance monitoring and error handling
+from fastmcp.server.middleware.timing import DetailedTimingMiddleware
+from fastmcp.server.middleware.error_handling import ErrorHandlingMiddleware
 
 # Import supporting modules
 from .formatters import format_todo, format_project, format_area, format_tag
@@ -64,9 +68,24 @@ TOOL_ANNOTATIONS: Dict[str, types.ToolAnnotations] = {
     "get-tags": READ_ONLY_ANNOTATIONS,
     "get-tagged-items": READ_ONLY_ANNOTATIONS,
     "count-items": READ_ONLY_ANNOTATIONS,
+    "count-search": READ_ONLY_ANNOTATIONS,
+    "count-tagged-items": READ_ONLY_ANNOTATIONS,
+    "count-project-items": READ_ONLY_ANNOTATIONS,
+    "count-advanced": READ_ONLY_ANNOTATIONS,
+    "get-overdue-items": READ_ONLY_ANNOTATIONS,
+    "get-items-due-soon": READ_ONLY_ANNOTATIONS,
+    "set-deadline": UPDATE_ANNOTATIONS,
+    "get-checklist-items": READ_ONLY_ANNOTATIONS,
+    "add-checklist-item": ADD_ANNOTATIONS,
+    "update-checklist-item": UPDATE_ANNOTATIONS,
+    "get-todos-with-checklists": READ_ONLY_ANNOTATIONS,
+    "add-heading": ADD_ANNOTATIONS,
+    "get-project-structure": READ_ONLY_ANNOTATIONS,
+    "move-todo-under-heading": UPDATE_ANNOTATIONS,
     "search-todos": READ_ONLY_ANNOTATIONS,
     "search-advanced": READ_ONLY_ANNOTATIONS,
     "add-todo": ADD_ANNOTATIONS,
+    "add-todo-interactive": ADD_ANNOTATIONS,
     "add-project": ADD_ANNOTATIONS,
     "update-todo": UPDATE_ANNOTATIONS,
     "update-project": UPDATE_ANNOTATIONS,
@@ -205,6 +224,99 @@ def _format_metadata(total: int, limit: Optional[int] = None, sort_by: Optional[
     return metadata
 
 
+def _apply_type_filter(items: List[Dict], type_filter: Optional[str]) -> List[Dict]:
+    """
+    Filter items by type.
+    
+    Args:
+        items: List of Things items (todos, projects, headings, etc.)
+        type_filter: Type to filter by ('to-do', 'project', 'heading', 'area')
+                    If None, no filtering is applied.
+    
+    Returns:
+        Filtered list of items
+    """
+    if not type_filter:
+        return items
+    
+    return [item for item in items if item.get('type') == type_filter]
+
+
+def _apply_status_filter(items: List[Dict], status_filter: Optional[str]) -> List[Dict]:
+    """
+    Filter items by status.
+    
+    Args:
+        items: List of Things items
+        status_filter: Status to filter by ('incomplete', 'completed', 'canceled')
+                      If None, no filtering is applied.
+    
+    Returns:
+        Filtered list of items
+    """
+    if not status_filter:
+        return items
+    
+    return [item for item in items if item.get('status') == status_filter]
+
+
+def _apply_deadline_filter(items: List[Dict], deadline_filter: Optional[str]) -> List[Dict]:
+    """
+    Filter items by deadline status.
+    
+    Args:
+        items: List of Things items
+        deadline_filter: Deadline status to filter by:
+                        - 'overdue': Items with deadlines in the past
+                        - 'today': Items with deadlines today
+                        - 'upcoming': Items with future deadlines
+                        - 'none': Items without deadlines
+                        If None, no filtering is applied.
+    
+    Returns:
+        Filtered list of items
+    """
+    if not deadline_filter:
+        return items
+    
+    from datetime import datetime, date
+    today = date.today()
+    
+    filtered = []
+    for item in items:
+        deadline_str = item.get('deadline')
+        
+        if deadline_filter == 'none':
+            if not deadline_str:
+                filtered.append(item)
+        elif deadline_filter == 'overdue':
+            if deadline_str:
+                try:
+                    deadline_date = datetime.fromisoformat(deadline_str).date()
+                    if deadline_date < today:
+                        filtered.append(item)
+                except (ValueError, AttributeError):
+                    pass
+        elif deadline_filter == 'today':
+            if deadline_str:
+                try:
+                    deadline_date = datetime.fromisoformat(deadline_str).date()
+                    if deadline_date == today:
+                        filtered.append(item)
+                except (ValueError, AttributeError):
+                    pass
+        elif deadline_filter == 'upcoming':
+            if deadline_str:
+                try:
+                    deadline_date = datetime.fromisoformat(deadline_str).date()
+                    if deadline_date > today:
+                        filtered.append(item)
+                except (ValueError, AttributeError):
+                    pass
+    
+    return filtered
+
+
 # Network binding configuration
 HOST_ENV_VAR = "THINGS_FASTMCP_HOST"
 PORT_ENV_VAR = "THINGS_FASTMCP_PORT"
@@ -265,8 +377,6 @@ _FASTMCP_SUPPORTS_ICONS = "icons" in _fastmcp_init_params
 
 def _create_fastmcp_instance() -> FastMCP:
     kwargs: Dict[str, Any] = {
-        "host": get_binding_host(),
-        "port": get_binding_port(),
         "instructions": INSTRUCTIONS_TEXT,
     }
 
@@ -286,12 +396,27 @@ def _create_fastmcp_instance() -> FastMCP:
 # Create the FastMCP server
 mcp = _create_fastmcp_instance()
 
+# Add middleware for performance monitoring and error handling
+logger.info("Adding FastMCP middleware: Performance monitoring and error handling")
+mcp.add_middleware(DetailedTimingMiddleware())  # Per-operation timing
+mcp.add_middleware(ErrorHandlingMiddleware(
+    include_traceback=True,  # Include traceback for debugging
+    transform_errors=True,   # Transform errors to consistent format
+))
+logger.info("FastMCP middleware configured successfully")
+
 # LIST VIEWS
 
 @mcp.tool(name="get-inbox", annotations=TOOL_ANNOTATIONS["get-inbox"])
-async def get_inbox(limit: Optional[int] = None, sort_by: Optional[str] = None, ctx: Optional[Context] = None) -> str:
+async def get_inbox(
+    limit: Optional[int] = None,
+    sort_by: Optional[str] = None,
+    type_filter: Optional[str] = None,
+    deadline_filter: Optional[str] = None,
+    ctx: Optional[Context] = None
+) -> str:
     """
-    Get todos from Inbox
+    Get todos from Inbox with optional filtering
     
     IMPORTANT: Use the 'limit' parameter to avoid overwhelming the context window.
     For targeted queries (e.g., "find 10 items with URLs"), always specify a limit.
@@ -299,6 +424,8 @@ async def get_inbox(limit: Optional[int] = None, sort_by: Optional[str] = None, 
     Args:
         limit: Maximum number of results to return. Recommended: 10-50 for focused tasks. (optional)
         sort_by: Sort results by field - 'title', 'created', 'modified', 'deadline', 'start_date' (optional)
+        type_filter: Filter by item type - 'to-do', 'project', 'heading' (optional)
+        deadline_filter: Filter by deadline - 'overdue', 'today', 'upcoming', 'none' (optional)
     """
     import time
     start_time = time.time()
@@ -310,6 +437,21 @@ async def get_inbox(limit: Optional[int] = None, sort_by: Optional[str] = None, 
         if not todos:
             log_operation_end("get-inbox", True, time.time() - start_time, count=0)
             return "No items found in Inbox"
+
+        # Apply filters
+        if type_filter:
+            todos = _apply_type_filter(todos, type_filter)
+        if deadline_filter:
+            todos = _apply_deadline_filter(todos, deadline_filter)
+        
+        if not todos:
+            filter_desc = []
+            if type_filter:
+                filter_desc.append(f"type={type_filter}")
+            if deadline_filter:
+                filter_desc.append(f"deadline={deadline_filter}")
+            log_operation_end("get-inbox", True, time.time() - start_time, count=0)
+            return f"No inbox items matching filters: {', '.join(filter_desc)}"
 
         total_count = len(todos)
         
@@ -328,7 +470,8 @@ async def get_inbox(limit: Optional[int] = None, sort_by: Optional[str] = None, 
         log_operation_end("get-inbox", True, time.time() - start_time, count=len(todos))
         
         result = "\n\n---\n\n".join(formatted_todos)
-        metadata = _format_metadata(total_count, limit, sort_by, extra=f"from {total_count} total")
+        extra_info = f"from {total_count} total" if limit and total_count > len(todos) else ""
+        metadata = _format_metadata(len(todos), limit, sort_by, extra=extra_info)
         return f"{metadata}\n\n{result}"
     except Exception as e:
         log_operation_end("get-inbox", False, time.time() - start_time, error=str(e))
@@ -635,20 +778,64 @@ def get_tags(include_items: bool = False) -> str:
     return "\n\n---\n\n".join(formatted_tags)
 
 @mcp.tool(name="get-tagged-items", annotations=TOOL_ANNOTATIONS["get-tagged-items"])
-def get_tagged_items(tag: str) -> str:
+def get_tagged_items(
+    tag: str,
+    type_filter: Optional[str] = None,
+    status_filter: Optional[str] = None,
+    limit: Optional[int] = None,
+    sort_by: Optional[str] = None
+) -> str:
     """
-    Get items with a specific tag
+    Get items with a specific tag, with optional filtering and sorting
 
     Args:
         tag: Tag title to filter by
+        type_filter: Filter by item type - 'to-do', 'project', 'heading', 'area' (optional)
+        status_filter: Filter by status - 'incomplete', 'completed', 'canceled' (optional)
+        limit: Maximum number of results to return (optional)
+        sort_by: Sort results by field - 'title', 'created', 'modified', 'deadline', 'start_date' (optional)
+    
+    Example:
+        >>> get_tagged_items("work", type_filter="to-do", status_filter="incomplete")
+        Get incomplete work todos
+        
+        >>> get_tagged_items("urgent", limit=10, sort_by="deadline")
+        Get first 10 urgent items sorted by deadline
     """
     todos = things.todos(tag=tag)
 
     if not todos:
         return f"No items found with tag '{tag}'"
 
+    # Apply filters
+    if type_filter:
+        todos = _apply_type_filter(todos, type_filter)
+    if status_filter:
+        todos = _apply_status_filter(todos, status_filter)
+    
+    # Check if filters removed all results
+    if not todos:
+        filter_desc = []
+        if type_filter:
+            filter_desc.append(f"type={type_filter}")
+        if status_filter:
+            filter_desc.append(f"status={status_filter}")
+        return f"No items found with tag '{tag}' matching filters: {', '.join(filter_desc)}"
+    
+    # Store total before limiting
+    total_count = len(todos)
+    
+    # Apply sorting and limiting
+    todos = _apply_sort_and_limit(todos, sort_by, limit)
+
     formatted_todos = [format_todo(todo) for todo in todos]
-    return "\n\n---\n\n".join(formatted_todos)
+    result = "\n\n---\n\n".join(formatted_todos)
+    
+    # Add metadata
+    extra_info = f"from {total_count} total" if limit and total_count > len(todos) else ""
+    metadata = _format_metadata(len(todos), limit, sort_by, extra=extra_info)
+    
+    return f"{metadata}\n\n{result}"
 
 # SEARCH OPERATIONS
 
@@ -706,31 +893,1064 @@ def count_items() -> str:
     except Exception as e:
         return _error_result(f"Error getting item counts: {str(e)}")
 
-@mcp.tool(name="search-todos", annotations=TOOL_ANNOTATIONS["search-todos"])
-async def search_todos(
-    query: str,
+@mcp.tool(name="count-search", annotations=TOOL_ANNOTATIONS.get("count-search", READ_ONLY_ANNOTATIONS))
+def count_search(query: str) -> str:
+    """
+    Count how many items match a search query without fetching full data
+    
+    Use this before search-todos to determine result size and plan pagination strategy.
+    
+    Args:
+        query: Search term to look for in todo titles and notes
+    """
+    try:
+        todos = things.search(query)
+        count = len(todos)
+        
+        result = f"Found {count} item(s) matching '{query}'"
+        
+        if count > 20:
+            result += "\n\nRecommendation: Use offset/limit parameters with search-todos to paginate through results."
+            result += "\nExample: offset=0, limit=20 for first page, then offset=20, limit=20 for second page."
+        
+        return result
+    except Exception as e:
+        return _error_result(f"Error counting search results: {str(e)}")
+
+@mcp.tool(name="count-tagged-items", annotations=TOOL_ANNOTATIONS.get("count-tagged-items", READ_ONLY_ANNOTATIONS))
+def count_tagged_items(tag: str) -> str:
+    """
+    Count how many items have a specific tag without fetching full data
+    
+    Use this before get-tagged-items to determine result size and plan pagination strategy.
+    
+    Args:
+        tag: Tag name to count items for
+    """
+    try:
+        todos = things.todos(tag=tag)
+        count = len(todos)
+        
+        result = f"Found {count} item(s) with tag '{tag}'"
+        
+        if count > 20:
+            result += "\n\nRecommendation: Use limit parameter with get-tagged-items to manage result size."
+        
+        return result
+    except Exception as e:
+        return _error_result(f"Error counting tagged items: {str(e)}")
+
+@mcp.tool(name="count-project-items", annotations=TOOL_ANNOTATIONS.get("count-project-items", READ_ONLY_ANNOTATIONS))
+def count_project_items(project_uuid: str) -> str:
+    """
+    Count how many items are in a specific project without fetching full data
+    
+    Use this before get-todos to determine result size and plan pagination strategy.
+    
+    Args:
+        project_uuid: UUID of the project to count items for
+    """
+    try:
+        todos = things.todos(project=project_uuid, start=None)
+        count = len(todos)
+        
+        result = f"Found {count} item(s) in project '{project_uuid}'"
+        
+        if count > 20:
+            result += "\n\nRecommendation: Use limit parameter with get-todos to manage result size."
+        
+        return result
+    except Exception as e:
+        return _error_result(f"Error counting project items: {str(e)}")
+
+@mcp.tool(name="count-advanced", annotations=TOOL_ANNOTATIONS.get("count-advanced", READ_ONLY_ANNOTATIONS))
+def count_advanced(
+    status: Optional[str] = None,
+    start_date: Optional[str] = None,
+    deadline: Optional[str] = None,
+    tag: Optional[str] = None,
+    area: Optional[str] = None,
+    type: Optional[str] = None
+) -> str:
+    """
+    Count how many items match advanced search criteria without fetching full data
+    
+    Use this before search-advanced to determine result size and plan pagination strategy.
+    
+    Args:
+        status: Filter by todo status (incomplete/completed/canceled)
+        start_date: Filter by start date (YYYY-MM-DD)
+        deadline: Filter by deadline (YYYY-MM-DD)
+        tag: Filter by tag
+        area: Filter by area UUID
+        type: Filter by item type (to-do/project/heading)
+    """
+    try:
+        kwargs = {}
+        if status:
+            kwargs['status'] = status
+        if deadline:
+            kwargs['deadline'] = deadline
+        if start_date:
+            kwargs['start'] = start_date
+        if tag:
+            kwargs['tag'] = tag
+        if area:
+            kwargs['area'] = area
+        if type:
+            kwargs['type'] = type
+        
+        todos = things.todos(**kwargs)
+        count = len(todos)
+        
+        filters_str = ", ".join(f"{k}={v}" for k, v in kwargs.items())
+        result = f"Found {count} item(s) matching criteria: {filters_str}"
+        
+        if count > 20:
+            result += "\n\nRecommendation: Use offset/limit parameters with search-advanced to paginate through results."
+        
+        return result
+    except Exception as e:
+        return _error_result(f"Error counting advanced search results: {str(e)}")
+
+# ============================================================================
+# Deadline Management (Phase 1: Critical Gaps)
+# ============================================================================
+
+@mcp.tool(name="get-overdue-items", annotations=TOOL_ANNOTATIONS["get-overdue-items"])
+def get_overdue_items(
     limit: Optional[int] = None,
-    sort_by: Optional[str] = None,
+    sort_by: Optional[str] = 'deadline'
+) -> str:
+    """
+    Get all incomplete items with deadlines in the past (overdue).
+    
+    Returns todos sorted by deadline (most overdue first) with metadata showing
+    how many days overdue each item is.
+    
+    Args:
+        limit: Maximum number of items to return (default: all)
+        sort_by: Sort method - 'deadline' (most overdue first), 'title', 'created', 'modified'
+    
+    Returns:
+        Formatted list of overdue items with deadline information and days overdue
+    
+    Example:
+        overdue = get_overdue_items(limit=10)  # Get 10 most overdue items
+    """
+    try:
+        from datetime import datetime, date
+        
+        # Get all todos
+        all_todos = things.todos()
+        
+        # Filter to incomplete items with deadlines in the past
+        today = date.today()
+        overdue_items = []
+        
+        for item in all_todos:
+            # Only incomplete items
+            if item.get('status') != 'incomplete':
+                continue
+            
+            deadline_str = item.get('deadline')
+            if not deadline_str:
+                continue
+            
+            try:
+                deadline_date = datetime.fromisoformat(deadline_str).date()
+                if deadline_date < today:
+                    # Calculate days overdue
+                    days_overdue = (today - deadline_date).days
+                    item['days_overdue'] = days_overdue
+                    overdue_items.append(item)
+            except (ValueError, AttributeError):
+                pass
+        
+        total_count = len(overdue_items)
+        
+        # Sort items (default: most overdue first)
+        if sort_by == 'deadline':
+            overdue_items.sort(key=lambda x: x.get('deadline', ''), reverse=False)  # Oldest first
+        else:
+            overdue_items = _apply_sort_and_limit(overdue_items, sort_by, None)
+        
+        # Apply limit after sorting
+        if limit:
+            overdue_items = overdue_items[:limit]
+        
+        if not overdue_items:
+            return "No overdue items found."
+        
+        # Format results
+        result_lines = []
+        for item in overdue_items:
+            title = item.get('title', 'Untitled')
+            deadline = item.get('deadline', 'No deadline')
+            days_overdue = item.get('days_overdue', 0)
+            uuid = item.get('uuid', '')
+            
+            # Format deadline display
+            if deadline and deadline != 'No deadline':
+                try:
+                    deadline_date = datetime.fromisoformat(deadline).date()
+                    deadline_str = deadline_date.strftime('%Y-%m-%d')
+                    overdue_badge = f"⚠️  {days_overdue} day{'s' if days_overdue != 1 else ''} overdue"
+                except Exception:
+                    deadline_str = deadline
+                    overdue_badge = "⚠️  Overdue"
+            else:
+                deadline_str = "No deadline"
+                overdue_badge = ""
+            
+            result_lines.append(f"• {title}")
+            result_lines.append(f"  Deadline: {deadline_str} {overdue_badge}")
+            result_lines.append(f"  UUID: {uuid}")
+            result_lines.append("")
+        
+        result = "\n".join(result_lines)
+        
+        # Add metadata
+        extra_info = f"from {total_count} total" if limit and total_count > len(overdue_items) else ""
+        metadata = _format_metadata(len(overdue_items), limit, sort_by, extra=extra_info)
+        
+        return f"{metadata}\n\n{result}"
+    
+    except Exception as e:
+        return _error_result(f"Error getting overdue items: {str(e)}")
+
+@mcp.tool(name="get-items-due-soon", annotations=TOOL_ANNOTATIONS["get-items-due-soon"])
+def get_items_due_soon(
+    days: int = 7,
+    limit: Optional[int] = None,
+    sort_by: Optional[str] = 'deadline'
+) -> str:
+    """
+    Get incomplete items with deadlines coming up within specified days.
+    
+    Returns todos sorted by deadline (soonest first) to help prioritize upcoming work.
+    
+    Args:
+        days: Number of days to look ahead (default: 7)
+        limit: Maximum number of items to return (default: all)
+        sort_by: Sort method - 'deadline' (soonest first), 'title', 'created', 'modified'
+    
+    Returns:
+        Formatted list of items due soon with deadline information
+    
+    Example:
+        due_soon = get_items_due_soon(days=3, limit=10)  # Next 10 items due in 3 days
+    """
+    try:
+        from datetime import datetime, date, timedelta
+        
+        # Get all todos
+        all_todos = things.todos()
+        
+        # Calculate date range
+        today = date.today()
+        end_date = today + timedelta(days=days)
+        
+        # Filter to incomplete items with deadlines in the next N days
+        due_soon_items = []
+        
+        for item in all_todos:
+            # Only incomplete items
+            if item.get('status') != 'incomplete':
+                continue
+            
+            deadline_str = item.get('deadline')
+            if not deadline_str:
+                continue
+            
+            try:
+                deadline_date = datetime.fromisoformat(deadline_str).date()
+                if today <= deadline_date <= end_date:
+                    # Calculate days until due
+                    days_until = (deadline_date - today).days
+                    item['days_until'] = days_until
+                    due_soon_items.append(item)
+            except (ValueError, AttributeError):
+                pass
+        
+        total_count = len(due_soon_items)
+        
+        # Sort items (default: soonest first)
+        if sort_by == 'deadline':
+            due_soon_items.sort(key=lambda x: x.get('deadline', ''))
+        else:
+            due_soon_items = _apply_sort_and_limit(due_soon_items, sort_by, None)
+        
+        # Apply limit after sorting
+        if limit:
+            due_soon_items = due_soon_items[:limit]
+        
+        if not due_soon_items:
+            return f"No items due in the next {days} day{'s' if days != 1 else ''}."
+        
+        # Format results
+        result_lines = []
+        for item in due_soon_items:
+            title = item.get('title', 'Untitled')
+            deadline = item.get('deadline', 'No deadline')
+            days_until = item.get('days_until', 0)
+            uuid = item.get('uuid', '')
+            
+            # Format deadline display
+            if deadline and deadline != 'No deadline':
+                try:
+                    deadline_date = datetime.fromisoformat(deadline).date()
+                    deadline_str = deadline_date.strftime('%Y-%m-%d')
+                    
+                    if days_until == 0:
+                        urgency_badge = "🔴 Due today"
+                    elif days_until == 1:
+                        urgency_badge = "🟠 Due tomorrow"
+                    else:
+                        urgency_badge = f"🟡 Due in {days_until} days"
+                except Exception:
+                    deadline_str = deadline
+                    urgency_badge = ""
+            else:
+                deadline_str = "No deadline"
+                urgency_badge = ""
+            
+            result_lines.append(f"• {title}")
+            result_lines.append(f"  Deadline: {deadline_str} {urgency_badge}")
+            result_lines.append(f"  UUID: {uuid}")
+            result_lines.append("")
+        
+        result = "\n".join(result_lines)
+        
+        # Add metadata
+        extra_info = f"from {total_count} total" if limit and total_count > len(due_soon_items) else ""
+        extra_info = f"due in next {days} day{'s' if days != 1 else ''}, {extra_info}" if extra_info else f"due in next {days} day{'s' if days != 1 else ''}"
+        metadata = _format_metadata(len(due_soon_items), limit, sort_by, extra=extra_info)
+        
+        return f"{metadata}\n\n{result}"
+    
+    except Exception as e:
+        return _error_result(f"Error getting items due soon: {str(e)}")
+
+@mcp.tool(name="set-deadline", annotations=TOOL_ANNOTATIONS["set-deadline"])
+def set_deadline(
+    todo_uuid: str,
+    deadline: str
+) -> str:
+    """
+    Set or update the deadline for a todo.
+    
+    Uses Things URL scheme to set a deadline date. The deadline can be in ISO format
+    (YYYY-MM-DD) or a natural language date that can be parsed.
+    
+    Args:
+        todo_uuid: UUID of the todo to update
+        deadline: Deadline date in YYYY-MM-DD format (e.g., '2025-12-31')
+                 Special values: 'today', 'tomorrow', 'none' (to clear deadline)
+    
+    Returns:
+        Success message with the todo title and new deadline
+    
+    Example:
+        result = set_deadline(todo_uuid="ABC123", deadline="2025-12-31")
+        result = set_deadline(todo_uuid="ABC123", deadline="today")
+        result = set_deadline(todo_uuid="ABC123", deadline="none")  # Clear deadline
+    """
+    try:
+        from datetime import datetime, date, timedelta
+        import urllib.parse
+        
+        # Validate todo exists
+        todo = things.get(todo_uuid)
+        if not todo:
+            return _error_result(f"Todo not found: {todo_uuid}")
+        
+        if isinstance(todo, list):
+            if not todo:
+                return _error_result(f"Todo not found: {todo_uuid}")
+            todo = todo[0]
+        
+        if todo.get('type') != 'to-do':
+            return _error_result(f"Item {todo_uuid} is not a todo (type: {todo.get('type')})")
+        
+        # Parse deadline
+        parsed_deadline = None
+        today = date.today()
+        
+        if deadline.lower() == 'none':
+            # Clear deadline - pass empty string
+            parsed_deadline = ''
+            deadline_display = "cleared"
+        elif deadline.lower() == 'today':
+            parsed_deadline = today.strftime('%Y-%m-%d')
+            deadline_display = f"{parsed_deadline} (today)"
+        elif deadline.lower() == 'tomorrow':
+            tomorrow = today + timedelta(days=1)
+            parsed_deadline = tomorrow.strftime('%Y-%m-%d')
+            deadline_display = f"{parsed_deadline} (tomorrow)"
+        else:
+            # Try to parse as ISO date
+            try:
+                parsed_date = datetime.strptime(deadline, '%Y-%m-%d').date()
+                parsed_deadline = parsed_date.strftime('%Y-%m-%d')
+                deadline_display = parsed_deadline
+            except ValueError:
+                return _error_result(f"Invalid deadline format: '{deadline}'. Use YYYY-MM-DD, 'today', 'tomorrow', or 'none'")
+        
+        # Build Things URL
+        if parsed_deadline == '':
+            # Clear deadline - don't include deadline parameter
+            url = f"things:///update?id={urllib.parse.quote(todo_uuid)}&deadline="
+        else:
+            url = f"things:///update?id={urllib.parse.quote(todo_uuid)}&deadline={urllib.parse.quote(parsed_deadline)}"
+        
+        # Execute URL scheme
+        success = execute_url(url)
+        
+        if success:
+            # Invalidate cache
+            invalidate_caches_for(["get-todos"])
+            
+            todo_title = todo.get('title', 'Untitled')
+            return f"✓ Set deadline for '{todo_title}' to: {deadline_display}"
+        else:
+            return _error_result(f"Failed to set deadline for todo: {todo_uuid}")
+    
+    except Exception as e:
+        return _error_result(f"Error setting deadline: {str(e)}")
+
+# ============================================================================
+# Checklist Operations (Phase 1: Critical Gaps)
+# ============================================================================
+
+@mcp.tool(name="get-checklist-items", annotations=TOOL_ANNOTATIONS["get-checklist-items"])
+def get_checklist_items(todo_uuid: str) -> str:
+    """
+    Get all checklist items for a specific todo.
+    
+    Returns formatted list of checklist items with their completion status.
+    Use this to review what needs to be done within a todo's checklist.
+    
+    Args:
+        todo_uuid: UUID of the todo containing the checklist
+    """
+    try:
+        # First verify the todo exists
+        todo = things.get(todo_uuid)
+        if not todo:
+            return _error_result(f"Todo {todo_uuid} not found")
+        
+        # Handle list response from things.get()
+        if isinstance(todo, list):
+            if not todo:
+                return _error_result(f"Todo {todo_uuid} not found")
+            todo = todo[0]
+        
+        if todo.get('type') != 'to-do':
+            return _error_result(f"Item {todo_uuid} is not a todo (type: {todo.get('type')})")
+        
+        # Get checklist items
+        items = things.checklist_items(todo_uuid)
+        
+        if not items:
+            return f"No checklist found for todo: {todo.get('title', todo_uuid)}"
+        
+        # Format output
+        lines = [
+            f"Checklist for: {todo.get('title', 'Untitled')}",
+            f"Todo UUID: {todo_uuid}",
+            f"Total items: {len(items)}",
+            ""
+        ]
+        
+        completed_count = 0
+        for item in items:
+            status = item.get('status', 'incomplete')
+            if status == 'completed':
+                status_icon = "✓"
+                completed_count += 1
+            else:
+                status_icon = "○"
+            
+            lines.append(f"  {status_icon} {item.get('title', 'Untitled item')}")
+        
+        # Add progress summary
+        progress_pct = (completed_count / len(items) * 100) if items else 0
+        lines.append(f"\nProgress: {completed_count}/{len(items)} ({progress_pct:.0f}%)")
+        
+        return "\n".join(lines)
+        
+    except Exception as e:
+        logger.error(f"Error getting checklist items: {str(e)}")
+        return _error_result(f"Error getting checklist items: {str(e)}")
+
+@mcp.tool(name="add-checklist-item", annotations=TOOL_ANNOTATIONS["add-checklist-item"])
+def add_checklist_item(
+    todo_uuid: str,
+    items: str,
     ctx: Optional[Context] = None
 ) -> str:
     """
-    Search todos by title or notes
+    Add checklist items to an existing todo.
+    
+    Creates or appends to a checklist within a todo. Items can be added one at a time
+    or multiple items separated by newlines.
+    
+    Args:
+        todo_uuid: UUID of the todo to add checklist items to
+        items: Checklist items to add (newline-separated for multiple items)
+        ctx: Context for progress reporting
+    
+    Example:
+        items="Buy milk\\nBuy eggs\\nBuy bread" adds 3 checklist items
+    """
+    try:
+        # Ensure Things app is running
+        if not app_state.update_app_state():
+            if not launch_things():
+                return _error_result("Error: Unable to launch Things app")
+        
+        # Verify todo exists
+        todo = things.get(todo_uuid)
+        if not todo:
+            return _error_result(f"Todo {todo_uuid} not found")
+        
+        # Handle list response from things.get()
+        if isinstance(todo, list):
+            if not todo:
+                return _error_result(f"Todo {todo_uuid} not found")
+            todo = todo[0]
+        
+        if todo.get('type') != 'to-do':
+            return _error_result(f"Item {todo_uuid} is not a todo (type: {todo.get('type')})")
+        
+        # Build URL scheme - Things uses checklist-items parameter
+        # Format: items separated by newlines, URL encoded
+        import urllib.parse
+        items_encoded = urllib.parse.quote(items)
+        url = f"things:///update?id={todo_uuid}&checklist-items={items_encoded}"
+        
+        logger.debug(f"Add checklist URL: {url}")
+        success = execute_url(url)
+        
+        if not success:
+            return _error_result("Error: Failed to add checklist items")
+        
+        # Count items added
+        item_list = items.split("\n")
+        item_count = len([item for item in item_list if item.strip()])
+        
+        # Invalidate caches
+        invalidate_caches_for(["get-todos"])
+        
+        return f"✓ Added {item_count} checklist item(s) to: {todo.get('title', 'todo')}"
+        
+    except Exception as e:
+        logger.error(f"Error adding checklist items: {str(e)}")
+        return _error_result(f"Error adding checklist items: {str(e)}")
+
+@mcp.tool(name="update-checklist-item", annotations=TOOL_ANNOTATIONS["update-checklist-item"])
+def update_checklist_item(
+    todo_uuid: str,
+    updated_items: str,
+    ctx: Optional[Context] = None
+) -> str:
+    """
+    Update/replace all checklist items for a todo.
+    
+    NOTE: This replaces the ENTIRE checklist. To mark individual items complete,
+    include them in the updated list without modification (incomplete items),
+    or prefix completed items with a checkbox marker.
+    
+    Things URL scheme limitation: Cannot update individual checklist items.
+    Must send complete list. Use get-checklist-items first to see current state.
+    
+    Args:
+        todo_uuid: UUID of the todo with the checklist
+        updated_items: Complete new checklist (newline-separated)
+        ctx: Context for progress reporting
+    
+    Example workflow:
+        1. Get current items: get-checklist-items(uuid)
+        2. Modify the list (add/remove/reorder)
+        3. Send complete new list: update-checklist-item(uuid, new_list)
+    """
+    try:
+        # Ensure Things app is running
+        if not app_state.update_app_state():
+            if not launch_things():
+                return _error_result("Error: Unable to launch Things app")
+        
+        # Verify todo exists
+        todo = things.get(todo_uuid)
+        if not todo:
+            return _error_result(f"Todo {todo_uuid} not found")
+        
+        # Handle list response from things.get()
+        if isinstance(todo, list):
+            if not todo:
+                return _error_result(f"Todo {todo_uuid} not found")
+            todo = todo[0]
+        
+        if todo.get('type') != 'to-do':
+            return _error_result(f"Item {todo_uuid} is not a todo (type: {todo.get('type')})")
+        
+        # Build URL scheme
+        import urllib.parse
+        items_encoded = urllib.parse.quote(updated_items)
+        url = f"things:///update?id={todo_uuid}&checklist-items={items_encoded}"
+        
+        logger.debug(f"Update checklist URL: {url}")
+        success = execute_url(url)
+        
+        if not success:
+            return _error_result("Error: Failed to update checklist")
+        
+        # Count items
+        item_list = updated_items.split("\n")
+        item_count = len([item for item in item_list if item.strip()])
+        
+        # Invalidate caches
+        invalidate_caches_for(["get-todos"])
+        
+        return f"✓ Updated checklist for: {todo.get('title', 'todo')} ({item_count} items)"
+        
+    except Exception as e:
+        logger.error(f"Error updating checklist: {str(e)}")
+        return _error_result(f"Error updating checklist: {str(e)}")
+
+@mcp.tool(name="get-todos-with-checklists", annotations=TOOL_ANNOTATIONS["get-todos-with-checklists"])
+def get_todos_with_checklists(
+    include_completed: bool = False,
+    limit: Optional[int] = None
+) -> str:
+    """
+    Find all todos that have checklists.
+    
+    Useful for reviewing todos with sub-tasks or finding incomplete checklists
+    that need attention.
+    
+    Args:
+        include_completed: Include completed todos (default: False)
+        limit: Maximum number of results to return
+    """
+    try:
+        # Get all todos with checklists
+        status = None if include_completed else "incomplete"
+        todos = things.todos(status=status)
+        
+        # Filter for todos with checklists
+        todos_with_checklists = [t for t in todos if t.get('checklist')]
+        
+        if not todos_with_checklists:
+            return "No todos with checklists found"
+        
+        # Apply limit
+        if limit:
+            todos_with_checklists = todos_with_checklists[:limit]
+        
+        # Format output
+        lines = [
+            f"Found {len(todos_with_checklists)} todo(s) with checklists:",
+            ""
+        ]
+        
+        for todo in todos_with_checklists:
+            # Get checklist items to show progress
+            checklist = things.checklist_items(todo['uuid'])
+            total_items = len(checklist) if checklist else 0
+            completed_items = sum(1 for item in checklist if item.get('status') == 'completed') if checklist else 0
+            progress = f"{completed_items}/{total_items}"
+            
+            status_icon = "✓" if todo.get('status') == 'completed' else "○"
+            lines.append(f"{status_icon} {todo.get('title', 'Untitled')} [{progress}]")
+            lines.append(f"   UUID: {todo['uuid']}")
+            
+            # Show project/area if present
+            if todo.get('project'):
+                project = things.get(todo['project'])
+                if project:
+                    # Handle list response from things.get()
+                    if isinstance(project, list):
+                        project = project[0] if project else None
+                    if project:
+                        lines.append(f"   Project: {project.get('title', 'Unknown')}")
+            if todo.get('area'):
+                area = things.get(todo['area'])
+                if area:
+                    # Handle list response from things.get()
+                    if isinstance(area, list):
+                        area = area[0] if area else None
+                    if area:
+                        lines.append(f"   Area: {area.get('title', 'Unknown')}")
+            
+            lines.append("")
+        
+        return "\n".join(lines)
+        
+    except Exception as e:
+        logger.error(f"Error getting todos with checklists: {str(e)}")
+        return _error_result(f"Error getting todos with checklists: {str(e)}")
+
+
+# ============================================================================
+# HEADING MANAGEMENT TOOLS
+# ============================================================================
+
+@mcp.tool()
+def add_heading(
+    project_uuid: str,
+    heading: str,
+    after_uuid: Optional[str] = None
+) -> str:
+    """
+    Add a heading to a project to organize todos into sections.
+    
+    Headings provide visual structure within projects and allow grouping
+    related todos together. They appear as bold section titles in Things 3.
+    
+    Args:
+        project_uuid: UUID of the project to add heading to
+        heading: Title for the new heading (used for organization)
+        after_uuid: Optional UUID of item to insert after (heading or todo).
+                   If omitted, heading is added at end of project.
+    
+    Returns:
+        Success confirmation with heading title and project context.
+    
+    Raises:
+        ValueError: If project doesn't exist or after_uuid is invalid.
+    
+    Example:
+        >>> add_heading("ABC123", "Phase 1 Tasks")
+        ✓ Added heading "Phase 1 Tasks" to project: "Q1 Planning"
+        
+        >>> add_heading("ABC123", "Phase 2 Tasks", after_uuid="DEF456")
+        ✓ Added heading "Phase 2 Tasks" after existing item in project: "Q1 Planning"
+    """
+    try:
+        # Validate project exists
+        project = things.get(project_uuid)
+        if not project or (isinstance(project, dict) and project.get('type') != 'project'):
+            return _error_result(f"Project {project_uuid} not found or is not a project")
+        
+        project_title = project.get('title', 'Unknown') if isinstance(project, dict) else 'Unknown'
+        
+        # Validate after_uuid if provided
+        if after_uuid:
+            after_item = things.get(after_uuid)
+            if not after_item:
+                return _error_result(f"After item {after_uuid} not found")
+            
+            # Verify after_item is in the same project
+            if isinstance(after_item, dict):
+                item_project_uuid = after_item.get('project')
+                if item_project_uuid != project_uuid:
+                    return _error_result(
+                        f"After item {after_uuid} is not in project {project_uuid}"
+                    )
+        
+        # Build Things URL scheme command
+        import urllib.parse
+        url_params = [
+            'type=heading',
+            f'heading={urllib.parse.quote(heading)}',
+            f'list-id={project_uuid}'
+        ]
+        
+        if after_uuid:
+            url_params.append(f'after={after_uuid}')
+        
+        url = f"things:///add?{'&'.join(url_params)}"
+        
+        logger.debug(f"Add heading URL: {url}")
+        success = execute_url(url)
+        
+        if not success:
+            return _error_result("Failed to add heading to project")
+        
+        # Invalidate relevant caches
+        invalidate_caches_for(["get-projects"])
+        
+        logger.info(f"Added heading '{heading}' to project {project_uuid}")
+        
+        if after_uuid:
+            return f"✓ Added heading \"{heading}\" after existing item in project: \"{project_title}\""
+        else:
+            return f"✓ Added heading \"{heading}\" to project: \"{project_title}\""
+    
+    except Exception as e:
+        logger.error(f"Failed to add heading: {e}")
+        return _error_result(f"Failed to add heading: {str(e)}")
+
+
+@mcp.tool()
+def get_project_structure(
+    project_uuid: str,
+    show_completed: bool = False
+) -> str:
+    """
+    Get the hierarchical structure of a project showing headings and grouped todos.
+    
+    This provides a visual overview of how a project is organized, with todos
+    grouped under their respective headings. Useful for understanding project
+    structure before moving items or planning additions.
+    
+    Args:
+        project_uuid: UUID of the project to analyze
+        show_completed: If True, include completed todos (default: False)
+    
+    Returns:
+        Formatted hierarchical structure with headings and todos.
+        Shows heading titles followed by indented todos under each heading.
+        Includes metadata: total items, heading count, completion stats.
+    
+    Raises:
+        ValueError: If project doesn't exist.
+    
+    Example:
+        >>> get_project_structure("ABC123")
+        
+        Project Structure: "Q1 Planning"
+        ========================================
+        
+        📌 Phase 1 Tasks
+           ○ Define requirements
+           ○ Create wireframes
+        
+        📌 Phase 2 Tasks
+           ✓ Review mockups
+           ○ Implement features
+        
+        (No heading)
+           ○ Final review
+        
+        ────────────────────────────────────────
+        Total: 5 items | 3 headings | 1/5 complete
+    """
+    try:
+        # Get project with include_items=True for structure
+        project_data = things.projects(uuid=project_uuid, include_items=True)
+        
+        if not project_data:
+            return _error_result(f"Project {project_uuid} not found")
+        
+        # Handle both single dict and list of dicts
+        project = project_data[0] if isinstance(project_data, list) else project_data
+        project_title = project.get('title', 'Untitled Project')
+        
+        # Get all items in the project
+        items = project.get('items', [])
+        
+        if not items:
+            return f"Project \"{project_title}\" is empty (no headings or todos)"
+        
+        # Organize items by heading
+        lines = [
+            f"\nProject Structure: \"{project_title}\"",
+            "=" * 40,
+            ""
+        ]
+        
+        current_heading = None
+        heading_count = 0
+        total_items = 0
+        completed_count = 0
+        
+        for item in items:
+            item_type = item.get('type')
+            
+            if item_type == 'heading':
+                heading_count += 1
+                current_heading = item.get('title', 'Untitled Heading')
+                lines.append(f"\n📌 {current_heading}")
+            
+            elif item_type == 'to-do':
+                status = item.get('status')
+                
+                # Skip completed todos if show_completed=False
+                if status == 'completed' and not show_completed:
+                    continue
+                
+                total_items += 1
+                if status == 'completed':
+                    completed_count += 1
+                
+                # Show heading context for first todo without a heading
+                if current_heading is None and total_items == 1:
+                    lines.append("\n(No heading)")
+                
+                # Format todo
+                icon = "✓" if status == 'completed' else "○"
+                title = item.get('title', 'Untitled')
+                lines.append(f"   {icon} {title}")
+        
+        # Summary footer
+        lines.extend([
+            "",
+            "─" * 40,
+            f"Total: {total_items} items | {heading_count} headings | {completed_count}/{total_items} complete"
+        ])
+        
+        logger.info(f"Retrieved structure for project {project_uuid}: {total_items} items, {heading_count} headings")
+        return "\n".join(lines)
+    
+    except Exception as e:
+        logger.error(f"Failed to get project structure: {e}")
+        return _error_result(f"Failed to get project structure: {str(e)}")
+
+
+@mcp.tool()
+def move_todo_under_heading(
+    todo_uuid: str,
+    heading_uuid: str
+) -> str:
+    """
+    Move a todo to appear under a specific heading within its project.
+    
+    This reorganizes project structure by placing todos under the appropriate
+    heading sections. Both items must be in the same project.
+    
+    Args:
+        todo_uuid: UUID of the todo to move
+        heading_uuid: UUID of the heading to move todo under
+    
+    Returns:
+        Success confirmation with todo and heading titles.
+    
+    Raises:
+        ValueError: If todo or heading not found, not in same project,
+                   or types are invalid.
+    
+    Example:
+        >>> move_todo_under_heading("TODO123", "HEAD456")
+        ✓ Moved "Implement API" under heading "Phase 2 Tasks"
+    
+    Notes:
+        - Both todo and heading must exist in the same project
+        - Todo will appear directly after the heading
+        - Other todos under the heading are not affected
+        - Use get-project-structure to see current organization
+    """
+    try:
+        # Validate todo exists and is a todo
+        todo = things.get(todo_uuid)
+        if not todo:
+            return _error_result(f"Todo {todo_uuid} not found")
+        
+        if isinstance(todo, dict) and todo.get('type') != 'to-do':
+            return _error_result(f"Item {todo_uuid} is not a todo (type: {todo.get('type')})")
+        
+        # Validate heading exists and is a heading
+        heading = things.get(heading_uuid)
+        if not heading:
+            return _error_result(f"Heading {heading_uuid} not found")
+        
+        if isinstance(heading, dict) and heading.get('type') != 'heading':
+            return _error_result(f"Item {heading_uuid} is not a heading (type: {heading.get('type')})")
+        
+        # Verify both items are in the same project
+        todo_project = todo.get('project') if isinstance(todo, dict) else None
+        heading_project = heading.get('project') if isinstance(heading, dict) else None
+        
+        if todo_project != heading_project:
+            return _error_result(
+                f"Todo and heading must be in the same project. "
+                f"Todo project: {todo_project}, Heading project: {heading_project}"
+            )
+        
+        # Get titles for response
+        todo_title = todo.get('title', 'Untitled') if isinstance(todo, dict) else 'Untitled'
+        heading_title = heading.get('title', 'Untitled') if isinstance(heading, dict) else 'Untitled'
+        
+        # Move todo under heading using Things URL scheme
+        # The heading parameter moves the todo directly under that heading
+        url = f"things:///update?id={todo_uuid}&heading={heading_uuid}"
+        
+        logger.debug(f"Move todo under heading URL: {url}")
+        success = execute_url(url)
+        
+        if not success:
+            return _error_result("Failed to move todo under heading")
+        
+        # Invalidate relevant caches
+        invalidate_caches_for(["get-projects"])
+        
+        logger.info(f"Moved todo {todo_uuid} under heading {heading_uuid}")
+        return f"✓ Moved \"{todo_title}\" under heading \"{heading_title}\""
+    
+    except Exception as e:
+        logger.error(f"Failed to move todo under heading: {e}")
+        return _error_result(f"Failed to move todo under heading: {str(e)}")
+
+
+# ============================================================================
+# SEARCH TOOLS
+# ============================================================================
+
+@mcp.tool(name="search-todos", annotations=TOOL_ANNOTATIONS["search-todos"])
+async def search_todos(
+    query: str,
+    offset: int = 0,
+    limit: Optional[int] = None,
+    sort_by: Optional[str] = None,
+    type_filter: Optional[str] = None,
+    status_filter: Optional[str] = None,
+    deadline_filter: Optional[str] = None,
+    ctx: Optional[Context] = None
+) -> str:
+    """
+    Search todos by title or notes with pagination and advanced filtering
     
     IMPORTANT: Use the 'limit' parameter to prevent overwhelming the context window when
-    searching across large todo collections. Without a limit, all matching results are returned.
+    searching across large todo collections. Use 'offset' for pagination through results.
+    
+    For large result sets:
+    1. Use count-search to get total count
+    2. Fetch pages with offset/limit: offset=0,limit=20 then offset=20,limit=20, etc.
 
     Args:
         query: Search term to look for in todo titles and notes
+        offset: Starting position for results (default 0, for pagination)
         limit: Maximum number of results to return (optional, recommended for large result sets)
         sort_by: Sort results by field - 'title', 'created', 'modified', 'deadline', 'start_date' (optional)
+        type_filter: Filter by item type - 'to-do', 'project', 'heading', 'area' (optional)
+        status_filter: Filter by status - 'incomplete', 'completed', 'canceled' (optional)
+        deadline_filter: Filter by deadline - 'overdue', 'today', 'upcoming', 'none' (optional)
         ctx: Context object for progress reporting (internal use)
+    
+    Example:
+        >>> search_todos("meeting", type_filter="to-do", status_filter="incomplete")
+        Searches for incomplete todos containing "meeting"
+        
+        >>> search_todos("project", deadline_filter="overdue")
+        Searches for items with overdue deadlines containing "project"
     """
     todos = things.search(query)
 
     if not todos:
         return f"No todos found matching '{query}'"
 
-    # Store total count before limiting
+    # Apply filters
+    if type_filter:
+        todos = _apply_type_filter(todos, type_filter)
+    if status_filter:
+        todos = _apply_status_filter(todos, status_filter)
+    if deadline_filter:
+        todos = _apply_deadline_filter(todos, deadline_filter)
+    
+    # Check if filters removed all results
+    if not todos:
+        filter_desc = []
+        if type_filter:
+            filter_desc.append(f"type={type_filter}")
+        if status_filter:
+            filter_desc.append(f"status={status_filter}")
+        if deadline_filter:
+            filter_desc.append(f"deadline={deadline_filter}")
+        return f"No items found matching '{query}' with filters: {', '.join(filter_desc)}"
+
+    # Store total count before pagination
     total_count = len(todos)
     
     # Warn if returning large result set without limit
@@ -740,15 +1960,33 @@ async def search_todos(
             "Consider using the 'limit' parameter to reduce context window usage."
         )
 
-    # Apply sorting and limiting using the shared helper
-    todos = _apply_sort_and_limit(todos, sort_by, limit)
+    # Apply sorting first
+    if sort_by:
+        sort_configs = {
+            'title': (lambda x: getattr(x, 'title', '').lower(), False),
+            'created': (lambda x: getattr(x, 'created', ''), True),
+            'modified': (lambda x: getattr(x, 'modified', ''), True),
+            'deadline': (lambda x: getattr(x, 'deadline', '') or '', True),
+            'start_date': (lambda x: getattr(x, 'start_date', '') or '', True),
+        }
+        if sort_by in sort_configs:
+            key_fn, reverse = sort_configs[sort_by]
+            todos.sort(key=key_fn, reverse=reverse)
+    
+    # Apply offset and limit for pagination
+    start_idx = offset
+    end_idx = offset + limit if limit else total_count
+    todos = todos[start_idx:end_idx]
 
     formatted_todos = [format_todo(todo) for todo in todos]
     result = "\n\n---\n\n".join(formatted_todos)
     
-    # Add metadata with total count information
-    extra_info = f"from {total_count} total" if limit and total_count > len(todos) else ""
-    metadata = _format_metadata(len(todos), limit, sort_by, extra=extra_info)
+    # Add pagination metadata
+    showing_from = start_idx + 1
+    showing_to = start_idx + len(todos)
+    metadata = f"Showing items {showing_from}-{showing_to} of {total_count} total"
+    if sort_by:
+        metadata += f" (sorted by {sort_by})"
     
     return f"{metadata}\n\n{result}"
 
@@ -760,15 +1998,20 @@ async def search_advanced(
     tag: Optional[str] = None,
     area: Optional[str] = None,
     type: Optional[str] = None,
+    offset: int = 0,
     limit: Optional[int] = None,
     sort_by: Optional[str] = None,
     ctx: Optional[Context] = None
 ) -> str:
     """
-    Advanced todo search with multiple filters
+    Advanced todo search with multiple filters and pagination support
     
     IMPORTANT: Use the 'limit' parameter to prevent overwhelming the context window when
-    searching across large todo collections. Without a limit, all matching results are returned.
+    searching across large todo collections. Use 'offset' for pagination through results.
+    
+    For large result sets:
+    1. Use count-advanced with same filters to get total count
+    2. Fetch pages with offset/limit: offset=0,limit=20 then offset=20,limit=20, etc.
 
     Args:
         status: Filter by todo status (incomplete/completed/canceled)
@@ -777,6 +2020,7 @@ async def search_advanced(
         tag: Filter by tag
         area: Filter by area UUID
         type: Filter by item type (to-do/project/heading)
+        offset: Starting position for results (default 0, for pagination)
         limit: Maximum number of results to return (optional, recommended for large result sets)
         sort_by: Sort results by field - 'title', 'created', 'modified', 'deadline', 'start_date' (optional)
         ctx: Context object for progress reporting (internal use)
@@ -805,7 +2049,7 @@ async def search_advanced(
         if not todos:
             return "No items found matching your search criteria"
 
-        # Store total count before limiting
+        # Store total count before pagination
         total_count = len(todos)
         
         # Warn if returning large result set without limit
@@ -815,15 +2059,33 @@ async def search_advanced(
                 "Consider using the 'limit' parameter to reduce context window usage."
             )
 
-        # Apply sorting and limiting using the shared helper
-        todos = _apply_sort_and_limit(todos, sort_by, limit)
+        # Apply sorting first
+        if sort_by:
+            sort_configs = {
+                'title': (lambda x: getattr(x, 'title', '').lower(), False),
+                'created': (lambda x: getattr(x, 'created', ''), True),
+                'modified': (lambda x: getattr(x, 'modified', ''), True),
+                'deadline': (lambda x: getattr(x, 'deadline', '') or '', True),
+                'start_date': (lambda x: getattr(x, 'start_date', '') or '', True),
+            }
+            if sort_by in sort_configs:
+                key_fn, reverse = sort_configs[sort_by]
+                todos.sort(key=key_fn, reverse=reverse)
+        
+        # Apply offset and limit for pagination
+        start_idx = offset
+        end_idx = offset + limit if limit else total_count
+        todos = todos[start_idx:end_idx]
 
         formatted_todos = [format_todo(todo) for todo in todos]
         result = "\n\n---\n\n".join(formatted_todos)
         
-        # Add metadata with total count information
-        extra_info = f"from {total_count} total" if limit and total_count > len(todos) else ""
-        metadata = _format_metadata(len(todos), limit, sort_by, extra=extra_info)
+        # Add pagination metadata
+        showing_from = start_idx + 1
+        showing_to = start_idx + len(todos)
+        metadata = f"Showing items {showing_from}-{showing_to} of {total_count} total"
+        if sort_by:
+            metadata += f" (sorted by {sort_by})"
         
         return f"{metadata}\n\n{result}"
     except Exception as e:
@@ -894,6 +2156,108 @@ def add_task(
         return f"Successfully created todo: {title}"
     except Exception as e:
         logger.error(f"Error creating todo: {str(e)}")
+        return _error_result(f"Error creating todo: {str(e)}")
+
+@mcp.tool(name="add-todo-interactive", annotations=ADD_ANNOTATIONS)
+async def add_todo_interactive(ctx: Context) -> str:
+    """
+    Create a new todo interactively with step-by-step guidance
+    
+    This tool uses interactive elicitation to guide you through creating a todo,
+    asking for each piece of information step by step. This is especially useful
+    when you want guidance on what information to provide.
+    
+    The tool will ask for:
+    1. Title (required)
+    2. Notes (optional)
+    3. When to schedule (optional: today, tomorrow, evening, anytime, someday, or YYYY-MM-DD)
+    4. Deadline (optional: YYYY-MM-DD)
+    5. Tags (optional: comma-separated list)
+    """
+    try:
+        # Ensure Things app is running
+        if not app_state.update_app_state():
+            if not launch_things():
+                return _error_result("Error: Unable to launch Things app")
+        
+        await ctx.info("Let's create a new todo. I'll guide you through the process.")
+        
+        # Step 1: Get title (required)
+        title_result = await ctx.elicit(
+            "What's the title of your todo?",
+            response_type=str
+        )
+        if title_result.action != "accept" or not title_result.data:
+            return "Todo creation cancelled"
+        title = title_result.data
+        
+        # Step 2: Get notes (optional)
+        notes_result = await ctx.elicit(
+            "Any notes? (Press Enter to skip)",
+            response_type=str
+        )
+        notes = notes_result.data if notes_result.action == "accept" and notes_result.data else None
+        
+        # Step 3: Get when (optional)
+        when_result = await ctx.elicit(
+            "When should this be done? (today, tomorrow, evening, anytime, someday, YYYY-MM-DD, or press Enter to skip)",
+            response_type=str
+        )
+        when = when_result.data if when_result.action == "accept" and when_result.data else None
+        
+        # Step 4: Get deadline (optional)
+        deadline_result = await ctx.elicit(
+            "Deadline? (YYYY-MM-DD format, or press Enter to skip)",
+            response_type=str
+        )
+        deadline = deadline_result.data if deadline_result.action == "accept" and deadline_result.data else None
+        
+        # Step 5: Get tags (optional)
+        tags_result = await ctx.elicit(
+            "Tags? (comma-separated, or press Enter to skip)",
+            response_type=str
+        )
+        tags = None
+        if tags_result.action == "accept" and tags_result.data:
+            tags = [tag.strip() for tag in tags_result.data.split(",")]
+            ensure_tags_exist(tags)
+        
+        await ctx.info(f"Creating todo: {title}")
+        
+        # Build the add_todo URL command and execute it
+        url = add_todo(
+            title=title,
+            notes=notes,
+            when=when,
+            deadline=deadline,
+            tags=tags,
+            checklist_items=None,
+            list_id=None,
+            list_title=None,
+            heading=None
+        )
+        
+        logger.debug(f"Add todo URL: {url}")
+        success = execute_url(url)
+        
+        if not success:
+            return _error_result("Error: Failed to create todo")
+        
+        # Invalidate relevant caches
+        invalidate_caches_for(["get-inbox", "get-today", "get-upcoming", "get-todos"])
+        
+        summary = f"✓ Successfully created todo: {title}"
+        if when:
+            summary += f"\n  Scheduled: {when}"
+        if deadline:
+            summary += f"\n  Deadline: {deadline}"
+        if tags:
+            summary += f"\n  Tags: {', '.join(tags)}"
+        
+        return summary
+        
+    except Exception as e:
+        logger.error(f"Error in interactive todo creation: {str(e)}")
         return _error_result(f"Error creating todo: {str(e)}")
 
 @mcp.tool(name="add-project", annotations=TOOL_ANNOTATIONS["add-project"])
@@ -1129,15 +2493,25 @@ def search_all_items(query: str) -> str:
 def get_recent(
     period: str,
     limit: Optional[int] = None,
-    sort_by: Optional[str] = None
+    sort_by: Optional[str] = None,
+    type_filter: Optional[str] = None,
+    status_filter: Optional[str] = None,
+    deadline_filter: Optional[str] = None
 ) -> str:
     """
-    Get recently created items
+    Get recently created items with optional filtering
 
     Args:
         period: Time period (e.g., '3d', '1w', '2m', '1y')
         limit: Maximum number of results to return (optional)
         sort_by: Sort results by field - 'title', 'created', 'modified', 'deadline', 'start_date' (optional)
+        type_filter: Filter by item type - 'to-do', 'project', 'heading', 'area' (optional)
+        status_filter: Filter by status - 'incomplete', 'completed', 'canceled' (optional)
+        deadline_filter: Filter by deadline - 'overdue', 'today', 'upcoming', 'none' (optional)
+    
+    Example:
+        >>> get_recent("7d", type_filter="to-do", status_filter="incomplete")
+        Get incomplete todos from last 7 days
     """
     try:
         # Check if period format is valid
@@ -1149,6 +2523,28 @@ def get_recent(
 
         if not items:
             return f"No items found in the last {period}"
+
+        # Apply filters
+        if type_filter:
+            items = _apply_type_filter(items, type_filter)
+        if status_filter:
+            items = _apply_status_filter(items, status_filter)
+        if deadline_filter:
+            items = _apply_deadline_filter(items, deadline_filter)
+        
+        # Check if filters removed all results
+        if not items:
+            filter_desc = []
+            if type_filter:
+                filter_desc.append(f"type={type_filter}")
+            if status_filter:
+                filter_desc.append(f"status={status_filter}")
+            if deadline_filter:
+                filter_desc.append(f"deadline={deadline_filter}")
+            return f"No items found in last {period} matching filters: {', '.join(filter_desc)}"
+
+        # Store total before limiting
+        total_count = len(items)
 
         # Sort if requested
         if sort_by:
@@ -1177,8 +2573,9 @@ def get_recent(
         result = "\n\n---\n\n".join(formatted_items)
         
         # Add metadata about results
-        total_found = len(items)
-        metadata = f"Found {total_found} item(s) from last {period}"
+        extra_info = f"from {total_count} total" if limit and total_count > len(items) else ""
+        metadata = _format_metadata(len(items), limit, sort_by, extra=extra_info)
+        metadata += f" (period: {period})"
         if limit and len(items) >= limit:
             metadata += f" (limited to {limit})"
         if sort_by:
@@ -1239,7 +2636,7 @@ def run_things_mcp_server():
     
     if transport == "http" or transport == "streamable-http":
         logger.info("Starting MCP server with HTTP transport on %s:%d", host, get_binding_port())
-        mcp.run(transport="streamable-http")
+        mcp.run(transport="streamable-http", host=host, port=get_binding_port())
     else:
         logger.info("Starting MCP server with STDIO transport for Claude Desktop")
         mcp.run(transport="stdio")
