@@ -98,6 +98,7 @@ TOOL_ANNOTATIONS: Dict[str, types.ToolAnnotations] = {
     "bulk-schedule-todos": MODIFY_ANNOTATIONS,
     "bulk-tag-todos": MODIFY_ANNOTATIONS,
     "bulk-move-todos": MODIFY_ANNOTATIONS,
+    "schedule-assistant": MODIFY_ANNOTATIONS,
     "add-project": ADD_ANNOTATIONS,
     "update-todo": UPDATE_ANNOTATIONS,
     "update-project": UPDATE_ANNOTATIONS,
@@ -3310,6 +3311,281 @@ async def bulk_move_todos(ctx: Context) -> str:
     except Exception as e:
         logger.error(f"Error in bulk move: {str(e)}")
         return _error_result(f"Error moving todos: {str(e)}")
+
+@mcp.tool(name="schedule-assistant", annotations=TOOL_ANNOTATIONS["schedule-assistant"])
+async def schedule_assistant(ctx: Context) -> str:
+    """
+    Smart scheduling assistant with natural language support (interactive)
+    
+    This is an advanced interactive tool that:
+    1. Helps you select todos to schedule
+    2. Accepts natural language dates ("tomorrow at 5pm", "next Monday", "in 3 days")
+    3. Shows preview with parsed dates
+    4. Handles multiple todos at once
+    5. Provides conflict warnings if overloading a day
+    
+    Natural language examples:
+    - "tomorrow at 2pm"
+    - "next Monday"
+    - "in 3 days"
+    - "next week Friday"
+    - "today evening" → This Evening
+    - "anytime" → Anytime list
+    - "someday" → Someday list
+    
+    Returns:
+        Summary of scheduled todos with parsed dates
+    """
+    import dateparser
+    from datetime import datetime, date
+    
+    try:
+        await ctx.info("🗓️ Smart Scheduling Assistant - Let's schedule some todos!")
+        
+        # Step 1: Get filter or select specific todos
+        selection_method = await ctx.elicit(
+            "\nHow would you like to select todos to schedule?\n"
+            "  1. Filter (tag:NAME, project:UUID, area:UUID, inbox, today, upcoming)\n"
+            "  2. Specific UUIDs (comma-separated todo IDs)\n"
+            "Selection method (1 or 2): ",
+            response_type=str
+        )
+        
+        if selection_method.action != "accept" or not selection_method.data:
+            return "Operation cancelled"
+        
+        method = selection_method.data.strip()
+        todos = []
+        selection_description = ""
+        
+        if method == "1":
+            # Filter-based selection
+            filter_input = await ctx.elicit(
+                "\nEnter filter criteria:\n"
+                "  - tag:NAME (e.g., tag:work)\n"
+                "  - project:UUID\n"
+                "  - area:UUID\n"
+                "  - inbox, today, upcoming\n"
+                "Filter: ",
+                response_type=str
+            )
+            
+            if filter_input.action != "accept" or not filter_input.data:
+                return "Operation cancelled"
+            
+            filter_str = filter_input.data.strip().lower()
+            
+            if filter_str.startswith("tag:"):
+                tag_name = filter_str[4:].strip()
+                all_todos = things.todos()
+                todos = [t for t in all_todos if t.get('status') == 'incomplete' 
+                        and tag_name in [tag.get('title', '').lower() for tag in t.get('tags', [])]]
+                selection_description = f"tag '{tag_name}'"
+            elif filter_str.startswith("project:"):
+                project_uuid = filter_str[8:].strip()
+                project = things.get(project_uuid)
+                if not project or not isinstance(project, dict):
+                    return _error_result(f"Project not found: {project_uuid}")
+                todos = things.todos(project=project_uuid)
+                todos = [t for t in todos if t.get('status') == 'incomplete']
+                selection_description = f"project '{project.get('title', project_uuid)}'"
+            elif filter_str.startswith("area:"):
+                area_uuid = filter_str[5:].strip()
+                area = things.get(area_uuid)
+                if not area or not isinstance(area, dict):
+                    return _error_result(f"Area not found: {area_uuid}")
+                todos = things.todos(area=area_uuid)
+                todos = [t for t in todos if t.get('status') == 'incomplete']
+                selection_description = f"area '{area.get('title', area_uuid)}'"
+            elif filter_str == "inbox":
+                todos = things.inbox()
+                todos = [t for t in todos if t.get('status') == 'incomplete']
+                selection_description = "Inbox"
+            elif filter_str == "today":
+                todos = things.today()
+                todos = [t for t in todos if t.get('status') == 'incomplete']
+                selection_description = "Today"
+            elif filter_str == "upcoming":
+                todos = things.upcoming()
+                todos = [t for t in todos if t.get('status') == 'incomplete']
+                selection_description = "Upcoming"
+            else:
+                return _error_result(f"Invalid filter: {filter_str}")
+                
+        elif method == "2":
+            # UUID-based selection
+            uuid_input = await ctx.elicit(
+                "\nEnter todo UUIDs (comma-separated):\nUUIDs: ",
+                response_type=str
+            )
+            
+            if uuid_input.action != "accept" or not uuid_input.data:
+                return "Operation cancelled"
+            
+            uuids = [u.strip() for u in uuid_input.data.split(",") if u.strip()]
+            for uuid in uuids:
+                todo = things.get(uuid)
+                if todo and isinstance(todo, dict):
+                    todos.append(todo)
+            
+            selection_description = f"{len(todos)} specific todo(s)"
+        else:
+            return _error_result("Invalid selection method. Use 1 or 2.")
+        
+        if not todos:
+            return f"No todos found for: {selection_description}"
+        
+        # Step 2: Show preview of selected todos
+        total_count = len(todos)
+        preview_todos = todos[:10]
+        
+        preview = f"\n📋 Selected {total_count} todo(s) from {selection_description}:\n\n"
+        for i, todo in enumerate(preview_todos, 1):
+            title = todo.get('title', 'Untitled')
+            current_when = todo.get('start_date', 'Not scheduled')
+            preview += f"  {i}. {title}\n     Current: {current_when}\n"
+        
+        if total_count > 10:
+            preview += f"\n  ... and {total_count - 10} more\n"
+        
+        await ctx.info(preview)
+        
+        # Step 3: Get natural language date
+        date_input = await ctx.elicit(
+            "\n🗓️ When should these todos be scheduled?\n"
+            "Examples:\n"
+            "  - 'tomorrow at 2pm'\n"
+            "  - 'next Monday'\n"
+            "  - 'in 3 days'\n"
+            "  - 'today evening' (for This Evening)\n"
+            "  - 'anytime' or 'someday' (for lists)\n"
+            "\nSchedule to: ",
+            response_type=str
+        )
+        
+        if date_input.action != "accept" or not date_input.data:
+            return "Operation cancelled"
+        
+        date_str = date_input.data.strip().lower()
+        
+        # Parse natural language date
+        schedule_param = None
+        schedule_description = date_str
+        parsed_date = None
+        
+        # Handle special keywords first
+        if date_str in ["anytime", "any time"]:
+            schedule_param = "anytime"
+            schedule_description = "Anytime"
+        elif date_str in ["someday", "some day"]:
+            schedule_param = "someday"
+            schedule_description = "Someday"
+        elif date_str in ["today evening", "this evening", "tonight"]:
+            schedule_param = "evening"
+            schedule_description = "This Evening"
+        elif date_str == "today":
+            schedule_param = "today"
+            schedule_description = "Today"
+        elif date_str == "tomorrow":
+            schedule_param = "tomorrow"
+            schedule_description = "Tomorrow"
+        else:
+            # Try to parse as natural language date
+            parsed_date = dateparser.parse(
+                date_str,
+                settings={
+                    'PREFER_DATES_FROM': 'future',
+                    'RELATIVE_BASE': datetime.now()
+                }
+            )
+            
+            if parsed_date:
+                # Convert to YYYY-MM-DD format
+                schedule_param = parsed_date.strftime("%Y-%m-%d")
+                schedule_description = parsed_date.strftime("%A, %B %d, %Y")
+                
+                # Warn if date is in the past
+                if parsed_date.date() < date.today():
+                    await ctx.warning(
+                        f"⚠️ Parsed date is in the past: {schedule_description}\n"
+                        f"   This might not be what you intended."
+                    )
+            else:
+                return _error_result(
+                    f"Could not parse date: '{date_str}'\n"
+                    f"Try formats like: tomorrow, next Monday, in 3 days, 2025-11-15"
+                )
+        
+        # Step 4: Check for conflicts (if scheduling to a specific date)
+        if parsed_date and schedule_param not in ["anytime", "someday", "evening"]:
+            # Check how many items are already scheduled for that day
+            existing_today_count = len([t for t in things.today() 
+                                       if t.get('start_date') == schedule_param])
+            
+            if existing_today_count + total_count > 20:
+                await ctx.warning(
+                    f"⚠️ High workload warning:\n"
+                    f"   Already {existing_today_count} items scheduled for {schedule_description}\n"
+                    f"   Adding {total_count} more = {existing_today_count + total_count} total"
+                )
+        
+        # Step 5: Confirmation
+        confirmation = await ctx.elicit(
+            f"\n📅 Ready to schedule {total_count} todo(s) to: {schedule_description}\n"
+            f"   Source: {selection_description}\n"
+            f"   Type 'yes' to confirm: ",
+            response_type=str
+        )
+        
+        if confirmation.action != "accept" or confirmation.data.strip().lower() != "yes":
+            return "Operation cancelled by user."
+        
+        # Step 6: Execute batch scheduling
+        await ctx.info(f"Scheduling {total_count} todos to {schedule_description}...")
+        
+        scheduled_count = 0
+        failed_count = 0
+        
+        for i, todo in enumerate(todos, 1):
+            try:
+                todo_uuid = todo.get('uuid')
+                if not todo_uuid:
+                    failed_count += 1
+                    continue
+                
+                # Build URL scheme command
+                url = f"things:///update?id={todo_uuid}&when={schedule_param}"
+                execute_url(url)
+                scheduled_count += 1
+                
+                # Progress update every 10 items
+                if i % 10 == 0:
+                    await ctx.report_progress(i, total_count)
+                    
+            except Exception as e:
+                logger.error(f"Failed to schedule todo {todo.get('uuid')}: {str(e)}")
+                failed_count += 1
+                continue
+        
+        # Invalidate caches
+        cache_keys = ["get-inbox", "get-today", "get-upcoming", "get-anytime", "get-someday", "get-todos"]
+        invalidate_caches_for(cache_keys)
+        
+        # Final report
+        result = "✓ Smart scheduling complete!\n"
+        result += f"  Successfully scheduled: {scheduled_count} todos\n"
+        if failed_count > 0:
+            result += f"  Failed: {failed_count} todos\n"
+        result += f"  Destination: {schedule_description}\n"
+        result += f"  Source: {selection_description}\n"
+        if parsed_date:
+            result += f"  Parsed from: '{date_str}'"
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error in schedule assistant: {str(e)}")
+        return _error_result(f"Error scheduling todos: {str(e)}")
 
 @mcp.tool(name="add-project", annotations=TOOL_ANNOTATIONS["add-project"])
 def add_new_project(
