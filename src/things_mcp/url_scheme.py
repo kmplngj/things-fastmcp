@@ -292,8 +292,14 @@ def update_todo(id: str, title: Optional[str] = None, notes: Optional[str] = Non
                 when: Optional[str] = None, deadline: Optional[str] = None,
                 tags: Optional[Union[list[str], str]] = None, add_tags: Optional[Union[list[str], str]] = None, 
                 checklist_items: Optional[list[str]] = None,
-                completed: Optional[bool] = None, canceled: Optional[bool] = None) -> str:
-    """Construct URL to update an existing todo."""
+                completed: Optional[bool] = None, canceled: Optional[bool] = None,
+                list_id: Optional[str] = None, heading: Optional[str] = None) -> str:
+    """Construct URL to update an existing todo.
+    
+    Args:
+        list_id: Move todo to a different project or area
+        heading: Move todo under a specific heading (requires heading to be in same project)
+    """
     params = {
         'id': id,
         'title': title,
@@ -304,15 +310,21 @@ def update_todo(id: str, title: Optional[str] = None, notes: Optional[str] = Non
         'add-tags': add_tags,  # Support for adding tags without replacing existing ones
         'checklist-items': '\n'.join(checklist_items) if checklist_items else None,
         'completed': completed,
-        'canceled': canceled
+        'canceled': canceled,
+        'list-id': list_id,  # Move to different project/area
+        'heading': heading  # Place under specific heading
     }
     return construct_url('update', {k: v for k, v in params.items() if v is not None})
 
 def update_project(id: str, title: Optional[str] = None, notes: Optional[str] = None,
                    when: Optional[str] = None, deadline: Optional[str] = None,
                    tags: Optional[list[str]] = None, completed: Optional[bool] = None,
-                   canceled: Optional[bool] = None) -> str:
-    """Construct URL to update an existing project."""
+                   canceled: Optional[bool] = None, area_id: Optional[str] = None) -> str:
+    """Construct URL to update an existing project.
+    
+    Args:
+        area_id: Move project to a different area
+    """
     params = {
         'id': id,
         'title': title,
@@ -321,7 +333,8 @@ def update_project(id: str, title: Optional[str] = None, notes: Optional[str] = 
         'deadline': deadline,
         'tags': tags,
         'completed': completed,
-        'canceled': canceled
+        'canceled': canceled,
+        'area-id': area_id  # Move project to different area
     }
     return construct_url('update-project', {k: v for k, v in params.items() if v is not None})
 

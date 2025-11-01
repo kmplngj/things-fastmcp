@@ -1992,19 +1992,23 @@ def move_item_to_project(
                     f"Heading project: {heading_project}, Destination: {project_uuid}"
                 )
         
-        # Build URL based on item type
-        # For todos: use 'list-id' parameter
-        # For projects: use 'area' parameter to move to an area
+        # Build URL based on item type using proper URL scheme helpers
+        # These helpers automatically add the authentication token
         if item_type == 'to-do':
-            url = f"things:///update?id={item_uuid}&list-id={project_uuid}"
-            if heading_uuid:
-                url += f"&heading={heading_uuid}"
+            url = update_todo(
+                id=item_uuid,
+                list_id=project_uuid,
+                heading=heading_uuid
+            )
         elif item_type == 'project':
             if destination_type != 'area':
                 return _error_result(
                     "Projects can only be moved to areas, not other projects"
                 )
-            url = f"things:///update-project?id={item_uuid}&area-id={project_uuid}"
+            url = update_project(
+                id=item_uuid,
+                area_id=project_uuid
+            )
         else:
             return _error_result(f"Cannot move items of type {item_type}")
         
