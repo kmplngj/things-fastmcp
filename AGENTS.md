@@ -28,6 +28,40 @@ This file tracks the agent's thoughts, ideas, and work flow for the `things-fast
 
 ## Log
 ### 2025-11-01 (Late Night) - Phase 2 Implementation Continues
+- **Implemented bulk-tag-todos (Task 2.1.3)** ✅
+  - **Motivation**: Enable users to add or remove tags from multiple todos at once
+  - **Implementation**:
+    * Multi-step elicitation workflow (7 steps):
+      1. Filter selection (tag, project, area, inbox, today, upcoming)
+      2. Fetch matching incomplete todos
+      3. Preview with current tags shown for each item
+      4. Tag operation (add or remove)
+      5. Tag names input (comma-separated)
+      6. Explicit confirmation (must type "yes")
+      7. Batch execution with progress updates every 10 items
+    * Safety features:
+      - 100-item batch limit with warning
+      - Preview shows current tags for each item
+      - Explicit confirmation required
+      - Progress reporting for long operations
+      - Continue on individual failures
+    * Tag operations:
+      - Add: Preserves existing tags, adds new ones
+      - Remove: Gets current tags, removes specified, sets remaining
+  - **Technical Details**:
+    * Add operation: `things:///update?id=UUID&add-tags=TAG1,TAG2`
+    * Remove operation: Gets current tags → filters → `things:///update?id=UUID&tags=REMAINING`
+    * Automatic tag creation via ensure_tags_exist()
+    * Cache invalidation for todos, inbox, today, upcoming, tagged-items
+  - **Code Quality**:
+    * ✅ Compiles successfully (~220 lines)
+    * ✅ Zero lint errors
+    * Follows established bulk operation pattern
+    * Added to TOOL_ANNOTATIONS dict
+  - **Git Commit**: ffff5cc "feat: Implement bulk-tag-todos interactive tool (Task 2.1.3)"
+  - **Progress**: Task 2.1.3 complete (3/10 Phase 2 tools, 30% of Phase 2)
+  - **Next**: Task 2.1.4 - Implement bulk-move-todos
+
 - **Implemented bulk-schedule-todos (Task 2.1.2)** ✅
   - **Motivation**: Enable users to reschedule multiple todos at once based on filters
   - **Implementation**:
