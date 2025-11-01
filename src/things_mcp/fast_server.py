@@ -2287,6 +2287,23 @@ def add_task(
             if not launch_things():
                 return _error_result("Error: Unable to launch Things app")
 
+        # Handle tags and checklist_items - some MCP clients send them as JSON strings
+        if tags and isinstance(tags, str):
+            import json
+            try:
+                tags = json.loads(tags)
+            except json.JSONDecodeError:
+                # If it's not valid JSON, treat it as a comma-separated string
+                tags = [tag.strip() for tag in tags.split(",") if tag.strip()]
+        
+        if checklist_items and isinstance(checklist_items, str):
+            import json
+            try:
+                checklist_items = json.loads(checklist_items)
+            except json.JSONDecodeError:
+                # If it's not valid JSON, treat it as newline-separated string
+                checklist_items = [item.strip() for item in checklist_items.split("\n") if item.strip()]
+
         # Ensure tags exist before using them
         if tags:
             ensure_tags_exist(tags)
@@ -2452,6 +2469,21 @@ def add_new_project(
             if not launch_things():
                 return _error_result("Error: Unable to launch Things app")
 
+        # Handle tags and todos - some MCP clients send them as JSON strings
+        if tags and isinstance(tags, str):
+            import json
+            try:
+                tags = json.loads(tags)
+            except json.JSONDecodeError:
+                tags = [tag.strip() for tag in tags.split(",") if tag.strip()]
+        
+        if todos and isinstance(todos, str):
+            import json
+            try:
+                todos = json.loads(todos)
+            except json.JSONDecodeError:
+                todos = [todo.strip() for todo in todos.split("\n") if todo.strip()]
+
         # Build the add_project URL command and execute it
         url = add_project(
             title=title,
@@ -2506,6 +2538,15 @@ def update_task(
         if not app_state.update_app_state():
             if not launch_things():
                 return _error_result("Error: Unable to launch Things app")
+
+        # Handle tags parameter - some MCP clients send it as a JSON string
+        if tags and isinstance(tags, str):
+            import json
+            try:
+                tags = json.loads(tags)
+            except json.JSONDecodeError:
+                # If it's not valid JSON, treat it as a comma-separated string
+                tags = [tag.strip() for tag in tags.split(",") if tag.strip()]
 
         # Ensure tags exist before using them
         if tags:
@@ -2566,6 +2607,14 @@ def update_existing_project(
             if not launch_things():
                 return _error_result("Error: Unable to launch Things app")
 
+        # Handle tags parameter - some MCP clients send it as a JSON string
+        if tags and isinstance(tags, str):
+            import json
+            try:
+                tags = json.loads(tags)
+            except json.JSONDecodeError:
+                tags = [tag.strip() for tag in tags.split(",") if tag.strip()]
+
         # Build the update_project URL command and execute it
         url = update_project(
             id=id,
@@ -2610,6 +2659,14 @@ def show_item(
         if not app_state.update_app_state():
             if not launch_things():
                 return _error_result("Error: Unable to launch Things app")
+
+        # Handle filter_tags parameter - some MCP clients send it as a JSON string
+        if filter_tags and isinstance(filter_tags, str):
+            import json
+            try:
+                filter_tags = json.loads(filter_tags)
+            except json.JSONDecodeError:
+                filter_tags = [tag.strip() for tag in filter_tags.split(",") if tag.strip()]
 
         # Execute the show URL command
         result = show(
