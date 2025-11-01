@@ -27,6 +27,33 @@ This file tracks the agent's thoughts, ideas, and work flow for the `things-fast
 - Run `ruff check .` and `pytest` after modifications.
 
 ## Log
+### 2025-11-01 (Late Night) - Critical Bug Fix #2
+- **Fixed Context serialization error in get-today (Production Blocker #2)** ✅
+  - **Issue**: User reported: `Error calling tool 'get-today': Object of type Context is not JSON serializable`
+  - **Root Cause**:
+    * get-today function had both `@cached` decorator AND `ctx: Optional[Context]` parameter
+    * Cache system tries to serialize all function parameters to create cache keys
+    * Context objects cannot be JSON serialized → crash at serialization
+  - **Solution**:
+    * Removed `ctx: Optional[Context]` parameter from get-today
+    * Removed context warning code that depended on ctx
+    * Kept docstring guidance about using limit parameter
+  - **Investigation**:
+    * Checked Claude Desktop logs: Confirmed serialization error
+    * Searched codebase: Only get-today had @cached + ctx combination
+    * 9 other functions have ctx parameter but no @cached decorator (working fine)
+  - **Technical Insight**:
+    * Context warnings and @cached are architecturally incompatible
+    * Cache needs to serialize parameters → Context can't serialize
+    * Trade-off: Cache performance > runtime warnings
+    * Alternative: Docstring guidance still informs users
+  - **Verification**:
+    * ✅ Compiles successfully
+    * ✅ No other functions affected
+    * ✅ Ready for testing in Claude Desktop
+  - **Git Commit**: ee82655 "fix: Remove Context parameter from cached get-today function"
+  - **Impact**: get-today now works correctly, cache system preserved
+
 ### 2025-11-01 (Late Night) - Phase 2 Implementation Continues
 - **Implemented bulk-move-todos (Task 2.1.4)** ✅
   - **Motivation**: Enable users to move multiple todos to different projects or areas at once
