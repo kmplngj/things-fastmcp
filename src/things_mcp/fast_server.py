@@ -96,6 +96,7 @@ TOOL_ANNOTATIONS: Dict[str, types.ToolAnnotations] = {
     "add-todo-interactive": ADD_ANNOTATIONS,
     "bulk-complete-todos": MODIFY_ANNOTATIONS,
     "bulk-schedule-todos": MODIFY_ANNOTATIONS,
+    "bulk-tag-todos": MODIFY_ANNOTATIONS,
     "add-project": ADD_ANNOTATIONS,
     "update-todo": UPDATE_ANNOTATIONS,
     "update-project": UPDATE_ANNOTATIONS,
@@ -2894,6 +2895,220 @@ async def bulk_schedule_todos(ctx: Context) -> str:
     except Exception as e:
         logger.error(f"Error in bulk schedule: {str(e)}")
         return _error_result(f"Error scheduling todos: {str(e)}")
+
+@mcp.tool(name="bulk-tag-todos", annotations=TOOL_ANNOTATIONS["bulk-tag-todos"])
+async def bulk_tag_todos(ctx: Context) -> str:
+    """
+    Add or remove tags from multiple todos at once (interactive)
+    
+    This is an interactive bulk operation that:
+    1. Asks for filter criteria (tag, project, area, or list)
+    2. Fetches matching incomplete todos
+    3. Shows preview of items to be tagged
+    4. Asks for tag operation (add or remove)
+    5. Asks for tag names (comma-separated)
+    6. Requires explicit confirmation ("yes")
+    7. Executes batch tagging with progress updates
+    
+    Safety features:
+    - Preview before execution (first 10 items shown)
+    - Explicit confirmation required
+    - 100-item batch limit
+    - Progress reporting every 10 items
+    - Continues on individual failures
+    
+    Returns:
+        Summary of tagged todos with success/failure counts
+    """
+    try:
+        # Step 1: Elicit filter criteria
+        filter_input = await ctx.elicit(
+            "Enter filter criteria for todos to tag:\n"
+            "  - tag:NAME (e.g., tag:work)\n"
+            "  - project:UUID (e.g., project:ABC123)\n"
+            "  - area:UUID (e.g., area:XYZ789)\n"
+            "  - inbox, today, upcoming\n"
+            "Filter: ",
+            response_type=str
+        )
+        
+        if filter_input.action != "accept" or not filter_input.data:
+            return "Operation cancelled"
+        
+        filter_input = filter_input.data.strip().lower()
+        if not filter_input:
+            return _error_result("No filter provided. Operation cancelled.")
+        
+        # Step 2: Fetch matching incomplete todos
+        await ctx.info(f"Fetching todos matching filter: {filter_input}...")
+        
+        todos = []
+        filter_description = filter_input
+        
+        if filter_input.startswith("tag:"):
+            tag_name = filter_input[4:].strip()
+            all_todos = things.todos()
+            todos = [t for t in all_todos if t.get('status') == 'incomplete' 
+                    and tag_name in [tag.get('title', '').lower() for tag in t.get('tags', [])]]
+            filter_description = f"tag '{tag_name}'"
+        elif filter_input.startswith("project:"):
+            project_uuid = filter_input[8:].strip()
+            project = things.get(project_uuid)
+            if not project or not isinstance(project, dict):
+                return _error_result(f"Project not found: {project_uuid}")
+            todos = things.todos(project=project_uuid)
+            todos = [t for t in todos if t.get('status') == 'incomplete']
+            filter_description = f"project '{project.get('title', project_uuid)}'"
+        elif filter_input.startswith("area:"):
+            area_uuid = filter_input[5:].strip()
+            area = things.get(area_uuid)
+            if not area or not isinstance(area, dict):
+                return _error_result(f"Area not found: {area_uuid}")
+            todos = things.todos(area=area_uuid)
+            todos = [t for t in todos if t.get('status') == 'incomplete']
+            filter_description = f"area '{area.get('title', area_uuid)}'"
+        elif filter_input == "inbox":
+            todos = things.inbox()
+            todos = [t for t in todos if t.get('status') == 'incomplete']
+            filter_description = "Inbox"
+        elif filter_input == "today":
+            todos = things.today()
+            todos = [t for t in todos if t.get('status') == 'incomplete']
+            filter_description = "Today"
+        elif filter_input == "upcoming":
+            todos = things.upcoming()
+            todos = [t for t in todos if t.get('status') == 'incomplete']
+            filter_description = "Upcoming"
+        else:
+            return _error_result(f"Invalid filter: {filter_input}. Use tag:NAME, project:UUID, area:UUID, inbox, today, or upcoming")
+        
+        if not todos:
+            return f"No incomplete todos found matching filter: {filter_description}"
+        
+        # Step 3: Show preview
+        total_count = len(todos)
+        preview_todos = todos[:10]
+        
+        preview = f"Found {total_count} incomplete todo(s) matching '{filter_description}':\n\n"
+        for i, todo in enumerate(preview_todos, 1):
+            title = todo.get('title', 'Untitled')
+            current_tags = [tag.get('title', '') for tag in todo.get('tags', [])]
+            tag_str = f" [Current tags: {', '.join(current_tags)}]" if current_tags else " [No tags]"
+            preview += f"  {i}. {title}{tag_str}\n"
+        
+        if total_count > 10:
+            preview += f"\n  ... and {total_count - 10} more\n"
+        
+        # Check batch limit
+        if total_count > 100:
+            await ctx.warning(f"⚠️ Found {total_count} items, but batch limit is 100. Only first 100 will be processed.")
+            todos = todos[:100]
+            total_count = 100
+        
+        await ctx.info(preview)
+        
+        # Step 4: Elicit tag operation
+        operation_input = await ctx.elicit(
+            "\nWhat tag operation should be performed?\n"
+            "  - add (add tags to todos)\n"
+            "  - remove (remove tags from todos)\n"
+            "Operation: ",
+            response_type=str
+        )
+        
+        if operation_input.action != "accept" or not operation_input.data:
+            return "Operation cancelled"
+        
+        operation = operation_input.data.strip().lower()
+        if operation not in ["add", "remove"]:
+            return _error_result(f"Invalid operation: {operation}. Use 'add' or 'remove'")
+        
+        # Step 5: Elicit tag names
+        tags_input = await ctx.elicit(
+            f"\nEnter tag names to {operation} (comma-separated, e.g., 'work, urgent'):\n"
+            "Tags: ",
+            response_type=str
+        )
+        
+        if tags_input.action != "accept" or not tags_input.data:
+            return "Operation cancelled"
+        
+        tag_names = [tag.strip() for tag in tags_input.data.split(",") if tag.strip()]
+        if not tag_names:
+            return _error_result("No tags provided. Operation cancelled.")
+        
+        # Ensure tags exist
+        ensure_tags_exist(tag_names)
+        
+        # Step 6: Confirmation
+        tag_list = ", ".join(tag_names)
+        confirmation = await ctx.elicit(
+            f"\n⚠️ About to {operation} tags '{tag_list}' for {total_count} todo(s).\n"
+            f"   Filter: {filter_description}\n"
+            f"   Type 'yes' to confirm: ",
+            response_type=str
+        )
+        
+        if confirmation.action != "accept" or confirmation.data.strip().lower() != "yes":
+            return "Operation cancelled by user."
+        
+        # Step 7: Execute batch tagging
+        await ctx.info(f"Processing {total_count} todos...")
+        
+        tagged_count = 0
+        failed_count = 0
+        
+        for i, todo in enumerate(todos, 1):
+            try:
+                todo_uuid = todo.get('uuid')
+                if not todo_uuid:
+                    failed_count += 1
+                    continue
+                
+                if operation == "add":
+                    # Use add-tags parameter to add without removing existing tags
+                    tag_param = ",".join(tag_names)
+                    url = f"things:///update?id={todo_uuid}&add-tags={tag_param}"
+                    execute_url(url)
+                else:
+                    # For remove: get current tags, remove specified ones, then set
+                    current_tags = [tag.get('title', '') for tag in todo.get('tags', [])]
+                    remaining_tags = [t for t in current_tags if t not in tag_names]
+                    
+                    if len(remaining_tags) != len(current_tags):
+                        # Only update if tags were actually removed
+                        tag_param = ",".join(remaining_tags) if remaining_tags else ""
+                        url = f"things:///update?id={todo_uuid}&tags={tag_param}"
+                        execute_url(url)
+                
+                tagged_count += 1
+                
+                # Progress update every 10 items
+                if i % 10 == 0:
+                    await ctx.report_progress(i, total_count)
+                    
+            except Exception as e:
+                logger.error(f"Failed to tag todo {todo.get('uuid')}: {str(e)}")
+                failed_count += 1
+                continue
+        
+        # Invalidate caches
+        cache_keys = ["get-todos", "get-inbox", "get-today", "get-upcoming", "get-tagged-items"]
+        invalidate_caches_for(cache_keys)
+        
+        # Final report
+        result = "✓ Bulk tagging complete!\n"
+        result += f"  Successfully processed: {tagged_count} todos\n"
+        if failed_count > 0:
+            result += f"  Failed: {failed_count} todos\n"
+        result += f"  Operation: {operation} tags '{tag_list}'\n"
+        result += f"  Filter: {filter_description}"
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error in bulk tag: {str(e)}")
+        return _error_result(f"Error tagging todos: {str(e)}")
 
 @mcp.tool(name="add-project", annotations=TOOL_ANNOTATIONS["add-project"])
 def add_new_project(
