@@ -2342,8 +2342,8 @@ def add_task(
     notes: Optional[str] = None,
     when: Optional[str] = None,
     deadline: Optional[str] = None,
-    tags: Optional[List[str]] = None,
-    checklist_items: Optional[List[str]] = None,
+    tags: Optional[Union[List[str], str]] = None,
+    checklist_items: Optional[Union[List[str], str]] = None,
     list_id: Optional[str] = None,
     list_title: Optional[str] = None,
     heading: Optional[str] = None
@@ -2385,8 +2385,8 @@ def add_task(
                 # If it's not valid JSON, treat it as newline-separated string
                 checklist_items = [item.strip() for item in checklist_items.split("\n") if item.strip()]
 
-        # Ensure tags exist before using them
-        if tags:
+        # Ensure tags exist before using them (tags should be List[str] now after conversion)
+        if tags and isinstance(tags, list):
             ensure_tags_exist(tags)
 
         # Build the add_todo URL command and execute it
@@ -2395,8 +2395,8 @@ def add_task(
             notes=notes,
             when=when,
             deadline=deadline,
-            tags=tags,
-            checklist_items=checklist_items,
+            tags=tags if isinstance(tags, list) else None,
+            checklist_items=checklist_items if isinstance(checklist_items, list) else None,
             list_id=list_id,
             list_title=list_title,
             heading=heading
@@ -2685,10 +2685,10 @@ def add_new_project(
     notes: Optional[str] = None,
     when: Optional[str] = None,
     deadline: Optional[str] = None,
-    tags: Optional[List[str]] = None,
+    tags: Optional[Union[List[str], str]] = None,
     area_id: Optional[str] = None,
     area_title: Optional[str] = None,
-    todos: Optional[List[str]] = None
+    todos: Optional[Union[List[str], str]] = None
 ) -> str:
     """
     Create a new project in Things
@@ -2730,10 +2730,10 @@ def add_new_project(
             notes=notes,
             when=when,
             deadline=deadline,
-            tags=tags,
+            tags=tags if isinstance(tags, list) else None,
             area_id=area_id,
             area_title=area_title,
-            todos=todos
+            todos=todos if isinstance(todos, list) else None
         )
 
         # Log the generated URL before executing
@@ -2756,7 +2756,7 @@ def update_task(
     notes: Optional[str] = None,
     when: Optional[str] = None,
     deadline: Optional[str] = None,
-    tags: Optional[List[str]] = None,
+    tags: Optional[Union[List[str], str]] = None,
     completed: Optional[bool] = None,
     canceled: Optional[bool] = None
 ) -> str:
@@ -2788,8 +2788,8 @@ def update_task(
                 # If it's not valid JSON, treat it as a comma-separated string
                 tags = [tag.strip() for tag in tags.split(",") if tag.strip()]
 
-        # Ensure tags exist before using them
-        if tags:
+        # Ensure tags exist before using them (tags should be List[str] now)
+        if tags and isinstance(tags, list):
             ensure_tags_exist(tags)
 
         # Build the update_todo URL command and execute it
@@ -2824,7 +2824,7 @@ def update_existing_project(
     notes: Optional[str] = None,
     when: Optional[str] = None,
     deadline: Optional[str] = None,
-    tags: Optional[List[str]] = None,
+    tags: Optional[Union[List[str], str]] = None,
     completed: Optional[bool] = None,
     canceled: Optional[bool] = None
 ) -> str:
@@ -2862,7 +2862,7 @@ def update_existing_project(
             notes=notes,
             when=when,
             deadline=deadline,
-            tags=tags,
+            tags=tags if isinstance(tags, list) else None,
             completed=completed,
             canceled=canceled
         )
@@ -2884,7 +2884,7 @@ def update_existing_project(
 def show_item(
     id: str,
     query: Optional[str] = None,
-    filter_tags: Optional[List[str]] = None
+    filter_tags: Optional[Union[List[str], str]] = None
 ) -> str:
     """
     Show a specific item or list in Things
@@ -2912,7 +2912,7 @@ def show_item(
         result = show(
             id=id,
             query=query,
-            filter_tags=filter_tags
+            filter_tags=filter_tags if isinstance(filter_tags, list) else None
         )
 
         if not result:
