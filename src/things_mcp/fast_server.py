@@ -82,6 +82,7 @@ TOOL_ANNOTATIONS: Dict[str, types.ToolAnnotations] = {
     "get-overdue-items": READ_ONLY_ANNOTATIONS,
     "get-items-due-soon": READ_ONLY_ANNOTATIONS,
     "set-deadline": UPDATE_ANNOTATIONS,
+    "set-when": UPDATE_ANNOTATIONS,
     "get-checklist-items": READ_ONLY_ANNOTATIONS,
     "add-checklist-item": ADD_ANNOTATIONS,
     "update-checklist-item": UPDATE_ANNOTATIONS,
@@ -1401,6 +1402,101 @@ def set_deadline(
     
     except Exception as e:
         return _error_result(f"Error setting deadline: {str(e)}")
+
+@mcp.tool(name="set-when")
+def set_when(
+    todo_uuid: str,
+    when: str
+) -> str:
+    """
+    Set or update when a todo is scheduled (the start date).
+    
+    Uses Things URL scheme to set the schedule. This moves the todo to a specific list
+    (Today, Tomorrow, Evening, Anytime, Someday) or schedules it for a specific date.
+    
+    Args:
+        todo_uuid: UUID of the todo to update
+        when: When to schedule - supports:
+              - 'today': Schedule for today
+              - 'tomorrow': Schedule for tomorrow
+              - 'evening': Schedule for this evening
+              - 'anytime': Move to Anytime list
+              - 'someday': Move to Someday list
+              - YYYY-MM-DD: Schedule for specific date
+              - 'none' or 'inbox': Move to Inbox (unschedule)
+    
+    Returns:
+        Success message with the todo title and new schedule
+    
+    Example:
+        result = set_when(todo_uuid="ABC123", when="today")
+        result = set_when(todo_uuid="ABC123", when="2025-12-25")
+        result = set_when(todo_uuid="ABC123", when="anytime")
+        result = set_when(todo_uuid="ABC123", when="inbox")  # Unschedule
+    """
+    try:
+        from datetime import datetime
+        import urllib.parse
+        
+        # Validate todo exists
+        todo = things.get(todo_uuid)
+        if not todo:
+            return _error_result(f"Todo not found: {todo_uuid}")
+        
+        if isinstance(todo, list):
+            if not todo:
+                return _error_result(f"Todo not found: {todo_uuid}")
+            todo = todo[0]
+        
+        if todo.get('type') != 'to-do':
+            return _error_result(f"Item {todo_uuid} is not a todo (type: {todo.get('type')})")
+        
+        # Validate and normalize 'when' parameter
+        when_lower = when.lower()
+        valid_keywords = ['today', 'tomorrow', 'evening', 'anytime', 'someday', 'none', 'inbox']
+        
+        if when_lower in valid_keywords:
+            # Use keyword as-is (Things URL scheme handles these)
+            if when_lower in ['none', 'inbox']:
+                # Special handling for unscheduling - use empty string
+                schedule_param = ''
+                when_display = "moved to Inbox (unscheduled)"
+            else:
+                schedule_param = when_lower
+                when_display = when_lower.capitalize()
+        else:
+            # Try to parse as date (YYYY-MM-DD)
+            try:
+                datetime.strptime(when, '%Y-%m-%d')  # Validate date format
+                schedule_param = when
+                when_display = when
+            except ValueError:
+                return _error_result(
+                    f"Invalid 'when' value: '{when}'. "
+                    f"Use: today, tomorrow, evening, anytime, someday, inbox, or YYYY-MM-DD"
+                )
+        
+        # Build Things URL
+        if schedule_param == '':
+            # Unschedule - move to inbox by omitting when parameter
+            url = f"things:///update?id={urllib.parse.quote(todo_uuid)}&when="
+        else:
+            url = f"things:///update?id={urllib.parse.quote(todo_uuid)}&when={urllib.parse.quote(schedule_param)}"
+        
+        # Execute URL scheme
+        success = execute_url(url)
+        
+        if success:
+            # Invalidate relevant caches
+            invalidate_caches_for(["get-todos", "get-inbox", "get-today", "get-upcoming", "get-anytime", "get-someday"])
+            
+            todo_title = todo.get('title', 'Untitled')
+            return f"✓ Updated schedule for '{todo_title}' to: {when_display}"
+        else:
+            return _error_result(f"Failed to update schedule for todo: {todo_uuid}")
+    
+    except Exception as e:
+        return _error_result(f"Error updating schedule: {str(e)}")
 
 # ============================================================================
 # Checklist Operations (Phase 1: Critical Gaps)
