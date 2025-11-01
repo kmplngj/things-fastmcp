@@ -54,6 +54,13 @@ UPDATE_ANNOTATIONS = types.ToolAnnotations(
     openWorldHint=False,
 )
 
+MODIFY_ANNOTATIONS = types.ToolAnnotations(
+    readOnlyHint=False,
+    destructiveHint=False,  # Has confirmation step
+    idempotentHint=False,  # Affects multiple items
+    openWorldHint=False,
+)
+
 TOOL_ANNOTATIONS: Dict[str, types.ToolAnnotations] = {
     "get-inbox": READ_ONLY_ANNOTATIONS,
     "get-today": READ_ONLY_ANNOTATIONS,
@@ -87,6 +94,7 @@ TOOL_ANNOTATIONS: Dict[str, types.ToolAnnotations] = {
     "search-advanced": READ_ONLY_ANNOTATIONS,
     "add-todo": ADD_ANNOTATIONS,
     "add-todo-interactive": ADD_ANNOTATIONS,
+    "bulk-complete-todos": MODIFY_ANNOTATIONS,
     "add-project": ADD_ANNOTATIONS,
     "update-todo": UPDATE_ANNOTATIONS,
     "update-project": UPDATE_ANNOTATIONS,
@@ -2511,6 +2519,165 @@ async def add_todo_interactive(ctx: Context) -> str:
     except Exception as e:
         logger.error(f"Error in interactive todo creation: {str(e)}")
         return _error_result(f"Error creating todo: {str(e)}")
+
+@mcp.tool(name="bulk-complete-todos", annotations=TOOL_ANNOTATIONS["bulk-complete-todos"])
+async def bulk_complete_todos(ctx: Context) -> str:
+    """
+    Complete multiple todos at once with interactive preview and confirmation
+    
+    This tool provides a safe way to batch-complete todos by:
+    1. Asking what criteria to filter by (tag, project, area, or all inbox items)
+    2. Showing a preview of matching incomplete todos
+    3. Confirming before making changes
+    4. Providing progress updates during execution
+    
+    This is useful for:
+    - Completing all todos with a specific tag (e.g., "quick-wins")
+    - Marking an entire project complete
+    - Clearing out inbox items
+    - Bulk operations with safety guardrails
+    """
+    try:
+        # Ensure Things app is running
+        if not app_state.update_app_state():
+            if not launch_things():
+                return _error_result("Error: Unable to launch Things app")
+        
+        await ctx.info("Let's complete some todos. I'll help you select which ones.")
+        
+        # Step 1: Ask for filter criteria
+        filter_result = await ctx.elicit(
+            "What should I filter by?\n"
+            "Options:\n"
+            "- 'tag:NAME' - All todos with specific tag\n"
+            "- 'project:UUID' - All todos in specific project\n"
+            "- 'area:UUID' - All todos in specific area\n"
+            "- 'inbox' - All inbox items\n"
+            "- 'today' - All today items\n"
+            "- 'upcoming' - All upcoming items",
+            response_type=str
+        )
+        
+        if filter_result.action != "accept" or not filter_result.data:
+            return "Operation cancelled"
+        
+        filter_input = filter_result.data.strip().lower()
+        
+        # Step 2: Fetch matching todos based on filter
+        todos = []
+        filter_description = ""
+        
+        if filter_input.startswith("tag:"):
+            tag_name = filter_input[4:].strip()
+            all_items = things.search(query="", tag=tag_name)
+            todos = [item for item in all_items if item.get('type') == 'to-do' and item.get('status') == 'incomplete']
+            filter_description = f"tag '{tag_name}'"
+        
+        elif filter_input.startswith("project:"):
+            project_id = filter_input[8:].strip()
+            project = things.get(project_id)
+            if not project or not isinstance(project, dict):
+                return _error_result(f"Project not found: {project_id}")
+            todos = [item for item in project.get('items', []) if item.get('type') == 'to-do' and item.get('status') == 'incomplete']
+            filter_description = f"project '{project.get('title', project_id)}'"
+        
+        elif filter_input.startswith("area:"):
+            area_id = filter_input[5:].strip()
+            area = things.get(area_id)
+            if not area or not isinstance(area, dict):
+                return _error_result(f"Area not found: {area_id}")
+            todos = [item for item in area.get('items', []) if item.get('type') == 'to-do' and item.get('status') == 'incomplete']
+            filter_description = f"area '{area.get('title', area_id)}'"
+        
+        elif filter_input == "inbox":
+            all_inbox = things.inbox()
+            todos = [item for item in all_inbox if item.get('type') == 'to-do' and item.get('status') == 'incomplete']
+            filter_description = "inbox"
+        
+        elif filter_input == "today":
+            all_today = things.today()
+            todos = [item for item in all_today if item.get('type') == 'to-do' and item.get('status') == 'incomplete']
+            filter_description = "today"
+        
+        elif filter_input == "upcoming":
+            all_upcoming = things.upcoming()
+            todos = [item for item in all_upcoming if item.get('type') == 'to-do' and item.get('status') == 'incomplete']
+            filter_description = "upcoming"
+        
+        else:
+            return _error_result(f"Invalid filter: {filter_input}. Use format like 'tag:work' or 'inbox'")
+        
+        # Step 3: Show preview
+        if not todos:
+            return f"No incomplete todos found in {filter_description}"
+        
+        # Limit batch size to 100 items
+        if len(todos) > 100:
+            await ctx.warning(f"Found {len(todos)} todos, but bulk operations are limited to 100 items at a time for safety.")
+            todos = todos[:100]
+        
+        # Show preview of first 10 items
+        preview_titles = [f"- {todo.get('title', 'Untitled')}" for todo in todos[:10]]
+        preview_text = "\n".join(preview_titles)
+        if len(todos) > 10:
+            preview_text += f"\n... and {len(todos) - 10} more"
+        
+        await ctx.info(f"Found {len(todos)} incomplete todos in {filter_description}:\n{preview_text}")
+        
+        # Step 4: Confirm
+        confirm_result = await ctx.elicit(
+            f"Complete all {len(todos)} todos? Type 'yes' to confirm",
+            response_type=str
+        )
+        
+        if confirm_result.action != "accept" or confirm_result.data.lower() != "yes":
+            return "Operation cancelled - no todos were modified"
+        
+        # Step 5: Execute bulk completion with progress updates
+        await ctx.info(f"Completing {len(todos)} todos...")
+        
+        completed_count = 0
+        failed_count = 0
+        
+        for i, todo in enumerate(todos):
+            try:
+                # Report progress every 10 items
+                if i > 0 and i % 10 == 0:
+                    await ctx.report_progress(i, len(todos))
+                
+                # Build URL to mark as complete
+                todo_id = todo.get('uuid')
+                if not todo_id:
+                    failed_count += 1
+                    continue
+                
+                url = update_todo(id=todo_id, completed=True)
+                success = execute_url(url)
+                
+                if success:
+                    completed_count += 1
+                else:
+                    failed_count += 1
+                    
+            except Exception as e:
+                logger.error(f"Error completing todo {todo.get('uuid')}: {str(e)}")
+                failed_count += 1
+        
+        # Invalidate relevant caches
+        invalidate_caches_for(["get-inbox", "get-today", "get-upcoming", "get-todos", "get-logbook"])
+        
+        # Final report
+        result = "✓ Bulk completion complete!\n"
+        result += f"  Successfully completed: {completed_count} todos\n"
+        if failed_count > 0:
+            result += f"  Failed: {failed_count} todos\n"
+        result += f"  Filter: {filter_description}"
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error in bulk complete: {str(e)}")
+        return _error_result(f"Error completing todos: {str(e)}")
 
 @mcp.tool(name="add-project", annotations=TOOL_ANNOTATIONS["add-project"])
 def add_new_project(
