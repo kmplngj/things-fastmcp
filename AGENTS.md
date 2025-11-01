@@ -27,29 +27,43 @@ This file tracks the agent's thoughts, ideas, and work flow for the `things-fast
 - Run `ruff check .` and `pytest` after modifications.
 
 ## Log
-### 2025-11-01 (Late Night) - User-Requested Enhancement: set-when Tool
-- **Added set-when tool for scheduling (companion to set-deadline)** ✅
-  - **User Request**: "do we also have a set-when to set day and today/this evening?"
-  - **Motivation**: User discovered we had `set-deadline` but no equivalent `set-when` for scheduling
+### 2025-11-01 (Late Night) - Design Refactoring: Remove Duplicate Tools
+- **Removed set-deadline and set-when tools (API simplification)** ✅
+  - **User Insight**: "is it really better to have set-when and also could use tool update-todo with the when? would it be better to have fewer tools?"
+  - **Decision**: Remove both specialized tools, enhance `update-todo` documentation instead
+  - **Rationale**:
+    * **Duplication**: update-todo already had `when` and `deadline` parameters
+    * **Maintenance burden**: 195 lines of duplicate code removed
+    * **Tool proliferation**: Reduced from 39 → 37 tools
+    * **Design principle**: Fewer, more flexible tools > specialized duplicates
+    * Trade-off: Slightly less discoverable, but cleaner API
   - **Implementation**:
-    * Standalone tool for updating todo schedules (when field)
-    * Supports all Things scheduling options:
-      - Keywords: today, tomorrow, evening, anytime, someday, inbox/none
-      - Specific dates: YYYY-MM-DD format
-    * URL scheme: `things:///update?id=UUID&when=SCHEDULE`
-    * Cache invalidation for all scheduling lists
-  - **Technical Details**:
-    * Added to TOOL_ANNOTATIONS with UPDATE_ANNOTATIONS
-    * Date validation with datetime.strptime()
-    * Special handling for unscheduling (empty string)
-    * ~96 lines of code (similar structure to set-deadline)
+    * Removed set-deadline function (~87 lines)
+    * Removed set-when function (~96 lines)
+    * Removed both from TOOL_ANNOTATIONS dict
+    * Enhanced update-todo docstring with comprehensive examples
+    * Added detailed parameter documentation for `when` and `deadline`
+  - **Enhanced Documentation**:
+    * **when parameter**: Documents all scheduling options (today, tomorrow, evening, anytime, someday, YYYY-MM-DD, empty)
+    * **deadline parameter**: Documents all deadline options (YYYY-MM-DD, today, tomorrow, empty)
+    * **5 usage examples**: Common scenarios (schedule, deadline, combined, complete, unschedule)
   - **Code Quality**:
     * ✅ Compiles successfully
-    * ✅ Zero lint errors
-    * Pattern consistent with set-deadline
+    * ✅ Zero errors
+    * -195 lines (from 4109 → 3914 lines)
+  - **Git Commits**: 
+    * 6827172 "fix: Replace deprecated datetime.utcnow() with datetime.now(timezone.utc)"
+    * eaeff23 "refactor: Remove set-deadline and set-when tools, enhance update-todo documentation"
+  - **Tool Count**: 37 (was 39, removed 2 duplicate tools)
+  - **Philosophy**: Confirmed preference for minimal, well-documented tools over convenience duplicates
+
+### 2025-11-01 (Late Night) - User-Requested Enhancement: set-when Tool [REVERTED]
+- **Added set-when tool for scheduling (companion to set-deadline)** ✅ → ❌ Reverted
+  - **User Request**: "do we also have a set-when to set day and today/this evening?"
+  - **Implementation**: Added ~96 lines for standalone scheduling tool
   - **Git Commit**: 0cfd47a "feat: Add set-when tool for scheduling todos (companion to set-deadline)"
-  - **Tool Count**: 39 (was 38, Phase 2 unplanned addition)
-  - **Note**: Also informed user about missing auth token configuration
+  - **Outcome**: User questioned design → Led to removal of BOTH set-when and set-deadline
+  - **Lesson**: User questions led to better design decision (fewer tools)
 
 ### 2025-11-01 (Late Night) - Phase 2 Milestone: 50% Complete! 🎉
 - **Implemented schedule-assistant (Task 2.2)** ✅
