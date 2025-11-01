@@ -27,6 +27,30 @@ This file tracks the agent's thoughts, ideas, and work flow for the `things-fast
 - Run `ruff check .` and `pytest` after modifications.
 
 ## Log
+### 2025-11-01 (Late Night) - User-Requested Enhancement: set-when Tool
+- **Added set-when tool for scheduling (companion to set-deadline)** ✅
+  - **User Request**: "do we also have a set-when to set day and today/this evening?"
+  - **Motivation**: User discovered we had `set-deadline` but no equivalent `set-when` for scheduling
+  - **Implementation**:
+    * Standalone tool for updating todo schedules (when field)
+    * Supports all Things scheduling options:
+      - Keywords: today, tomorrow, evening, anytime, someday, inbox/none
+      - Specific dates: YYYY-MM-DD format
+    * URL scheme: `things:///update?id=UUID&when=SCHEDULE`
+    * Cache invalidation for all scheduling lists
+  - **Technical Details**:
+    * Added to TOOL_ANNOTATIONS with UPDATE_ANNOTATIONS
+    * Date validation with datetime.strptime()
+    * Special handling for unscheduling (empty string)
+    * ~96 lines of code (similar structure to set-deadline)
+  - **Code Quality**:
+    * ✅ Compiles successfully
+    * ✅ Zero lint errors
+    * Pattern consistent with set-deadline
+  - **Git Commit**: 0cfd47a "feat: Add set-when tool for scheduling todos (companion to set-deadline)"
+  - **Tool Count**: 39 (was 38, Phase 2 unplanned addition)
+  - **Note**: Also informed user about missing auth token configuration
+
 ### 2025-11-01 (Late Night) - Phase 2 Milestone: 50% Complete! 🎉
 - **Implemented schedule-assistant (Task 2.2)** ✅
   - **Motivation**: Provide smart scheduling with natural language support for better UX
