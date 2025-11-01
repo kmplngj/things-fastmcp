@@ -495,8 +495,7 @@ async def get_today(
     limit: Optional[int] = None,
     sort_by: Optional[str] = None,
     type_filter: Optional[str] = None,
-    deadline_filter: Optional[str] = None,
-    ctx: Optional[Context] = None
+    deadline_filter: Optional[str] = None
 ) -> str:
     """
     Get todos due today
@@ -526,14 +525,6 @@ async def get_today(
         todos = _apply_deadline_filter(todos, deadline_filter)
 
         total_count = len(todos)
-        
-        # Warn if returning large result set without limit
-        if ctx and not limit and total_count > 20:
-            await ctx.warning(
-                f"Returning all {total_count} today items without a limit. "
-                f"Consider using limit parameter (e.g., limit=10) to reduce context window usage.",
-                extra={"total_items": total_count, "limit_used": False}
-            )
 
         # Apply sorting and limiting
         todos = _apply_sort_and_limit(todos, sort_by, limit)
