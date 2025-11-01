@@ -27,6 +27,39 @@ This file tracks the agent's thoughts, ideas, and work flow for the `things-fast
 - Run `ruff check .` and `pytest` after modifications.
 
 ## Log
+### 2025-11-01 (Late Night) - Phase 2 Milestone: 50% Complete! 🎉
+- **Implemented schedule-assistant (Task 2.2)** ✅
+  - **Motivation**: Provide smart scheduling with natural language support for better UX
+  - **Implementation**:
+    * Advanced interactive wizard with NL date parsing
+    * Two selection methods: filter-based or specific UUIDs
+    * Natural language date input with dateparser library
+    * Conflict detection for overloaded days (warns if >20 items)
+    * Preview with parsed dates before execution
+    * Batch scheduling with progress updates
+  - **Natural Language Capabilities**:
+    * Relative dates: "tomorrow", "in 3 days", "next Monday"
+    * Absolute dates: "2025-11-15", "December 25"
+    * Time specifications: "tomorrow at 2pm", "next Friday at 5pm"
+    * Special keywords: "anytime", "someday", "today evening"
+    * Smart parsing: PREFER_DATES_FROM='future' setting
+    * Past date warning: Detects and warns if parsed date is in past
+  - **Technical Details**:
+    * Added dateparser>=1.2.0 dependency (with 5 sub-dependencies)
+    * Uses dateparser.parse() with future-preferring settings
+    * Converts parsed dates to YYYY-MM-DD for Things URL scheme
+    * Conflict detection: Counts existing items on target day
+    * Cache invalidation for all affected lists
+  - **Code Quality**:
+    * ✅ Compiles successfully (~240 lines)
+    * ✅ Zero lint errors
+    * Comprehensive error handling
+    * Added to TOOL_ANNOTATIONS dict
+  - **Git Commit**: f440131 "feat: Implement schedule-assistant with natural language support (Task 2.2)"
+  - **Progress**: Task 2.2 complete (5/10 Phase 2 tools, **50% of Phase 2!**)
+  - **Milestone**: Halfway through Phase 2! All bulk operations + smart assistant complete
+  - **Next**: Task 2.3 - Project Template System (5 tools remaining)
+
 ### 2025-11-01 (Late Night) - Critical Bug Fix #2
 - **Fixed Context serialization error in get-today (Production Blocker #2)** ✅
   - **Issue**: User reported: `Error calling tool 'get-today': Object of type Context is not JSON serializable`
