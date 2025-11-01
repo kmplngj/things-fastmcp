@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`move-item-to-project`** - Move todos to projects/areas, optionally under a specific heading
+  - Move todos between projects
+  - Move projects to areas
+  - Place items directly under headings in destination project
+  - Supports both simple moves and targeted placement
+
 ## [2.1.0] - 2025-11-01
 
 ### Added - Phase 1: Critical Gaps

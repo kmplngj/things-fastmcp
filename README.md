@@ -201,6 +201,7 @@ The server exposes 31 tools organized into logical groups:
 - `get-project-structure` - View hierarchical project structure with headings
 - `add-heading` - Add organizational headings to projects
 - `move-todo-under-heading` - Reorganize todos by moving them under headings
+- `move-item-to-project` - Move todos to projects/areas (optionally under a heading)
 
 ### 🏷️ Tag Operations
 

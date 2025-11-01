@@ -82,6 +82,7 @@ TOOL_ANNOTATIONS: Dict[str, types.ToolAnnotations] = {
     "add-heading": ADD_ANNOTATIONS,
     "get-project-structure": READ_ONLY_ANNOTATIONS,
     "move-todo-under-heading": UPDATE_ANNOTATIONS,
+    "move-item-to-project": UPDATE_ANNOTATIONS,
     "search-todos": READ_ONLY_ANNOTATIONS,
     "search-advanced": READ_ONLY_ANNOTATIONS,
     "add-todo": ADD_ANNOTATIONS,
@@ -1882,6 +1883,157 @@ def move_todo_under_heading(
     except Exception as e:
         logger.error(f"Failed to move todo under heading: {e}")
         return _error_result(f"Failed to move todo under heading: {str(e)}")
+
+
+@mcp.tool(name="move-item-to-project", annotations=TOOL_ANNOTATIONS["move-item-to-project"])
+def move_item_to_project(
+    item_uuid: str,
+    project_uuid: str,
+    heading_uuid: Optional[str] = None
+) -> str:
+    """
+    Move a todo or project to a different project or area.
+    
+    This tool allows you to reorganize your Things database by moving items
+    between projects. You can also move items directly under a specific heading
+    within the target project.
+    
+    Args:
+        item_uuid: UUID of the todo or project to move
+        project_uuid: UUID of the destination project or area to move item to
+        heading_uuid: Optional UUID of heading within destination project to place item under
+    
+    Returns:
+        Success confirmation with item and destination titles.
+    
+    Raises:
+        ValueError: If item or project not found, or invalid types.
+    
+    Example:
+        >>> # Move todo to a project
+        >>> move_item_to_project("TODO123", "PROJECT456")
+        ✓ Moved "Buy groceries" to project "Personal Tasks"
+        
+        >>> # Move todo to a project under a specific heading
+        >>> move_item_to_project("TODO123", "PROJECT456", "HEADING789")
+        ✓ Moved "Buy groceries" to project "Personal Tasks" under heading "Shopping"
+        
+        >>> # Move a project to an area (projects can be nested in areas)
+        >>> move_item_to_project("PROJECT123", "AREA456")
+        ✓ Moved project "Q4 Planning" to area "Work"
+    
+    Notes:
+        - Works for both todos and projects
+        - Can move to projects or areas
+        - Optionally place under a specific heading
+        - Use get-todos, get-projects, get-areas to find UUIDs
+        - Use get-project-structure to see available headings
+    """
+    try:
+        # Validate item exists
+        item = things.get(item_uuid)
+        if not item:
+            return _error_result(f"Item {item_uuid} not found")
+        
+        # Handle list response from things.get()
+        if isinstance(item, list):
+            if not item:
+                return _error_result(f"Item {item_uuid} not found")
+            item = item[0]
+        
+        item_type = item.get('type', 'unknown')
+        item_title = item.get('title', 'Untitled')
+        
+        # Validate destination exists
+        destination = things.get(project_uuid)
+        if not destination:
+            return _error_result(f"Destination {project_uuid} not found")
+        
+        # Handle list response from things.get()
+        if isinstance(destination, list):
+            if not destination:
+                return _error_result(f"Destination {project_uuid} not found")
+            destination = destination[0]
+        
+        destination_type = destination.get('type', 'unknown')
+        destination_title = destination.get('title', 'Untitled')
+        
+        # Validate destination is a project or area
+        if destination_type not in ['project', 'area']:
+            return _error_result(
+                f"Destination must be a project or area, not {destination_type}"
+            )
+        
+        # If heading is specified, validate it
+        heading_title = None
+        if heading_uuid:
+            heading = things.get(heading_uuid)
+            if not heading:
+                return _error_result(f"Heading {heading_uuid} not found")
+            
+            # Handle list response
+            if isinstance(heading, list):
+                if not heading:
+                    return _error_result(f"Heading {heading_uuid} not found")
+                heading = heading[0]
+            
+            if heading.get('type') != 'heading':
+                return _error_result(
+                    f"Item {heading_uuid} is not a heading (type: {heading.get('type')})"
+                )
+            
+            heading_title = heading.get('title', 'Untitled')
+            
+            # Verify heading is in destination project
+            heading_project = heading.get('project')
+            if heading_project != project_uuid:
+                return _error_result(
+                    f"Heading must be in destination project. "
+                    f"Heading project: {heading_project}, Destination: {project_uuid}"
+                )
+        
+        # Build URL based on item type
+        # For todos: use 'list-id' parameter
+        # For projects: use 'area' parameter to move to an area
+        if item_type == 'to-do':
+            url = f"things:///update?id={item_uuid}&list-id={project_uuid}"
+            if heading_uuid:
+                url += f"&heading={heading_uuid}"
+        elif item_type == 'project':
+            if destination_type != 'area':
+                return _error_result(
+                    "Projects can only be moved to areas, not other projects"
+                )
+            url = f"things:///update-project?id={item_uuid}&area-id={project_uuid}"
+        else:
+            return _error_result(f"Cannot move items of type {item_type}")
+        
+        logger.debug(f"Move item to project URL: {url}")
+        success = execute_url(url)
+        
+        if not success:
+            return _error_result("Failed to move item")
+        
+        # Invalidate relevant caches
+        invalidate_caches_for(["get-todos", "get-projects", "get-inbox"])
+        
+        # Build response message
+        if heading_title:
+            result_msg = (
+                f"✓ Moved \"{item_title}\" to {destination_type} \"{destination_title}\" "
+                f"under heading \"{heading_title}\""
+            )
+        else:
+            result_msg = (
+                f"✓ Moved \"{item_title}\" to {destination_type} \"{destination_title}\""
+            )
+        
+        logger.info(f"Moved {item_type} {item_uuid} to {destination_type} {project_uuid}")
+        return result_msg
+    
+    except Exception as e:
+        logger.error(f"Failed to move item to project: {e}")
+        return _error_result(f"Failed to move item to project: {str(e)}")
 
 
 # ============================================================================

@@ -24,7 +24,6 @@ No Analytics               →   Full Analytics Suite
 | **Status Filtering** | ✅ Yes | ✅ Yes | ❌ No | 🔥 HIGH |
 | **Deadline Queries** | ✅ Yes | ✅ Yes | ❌ No | 🔥 HIGH |
 | **Bulk Operations** | ⚠️ Manual | ✅ Yes | ❌ No | 🟡 MEDIUM |
-| **Templates** | ❌ No | ⚠️ Workaround | ❌ No | 🟡 MEDIUM |
 | **Analytics** | ⚠️ Basic | ✅ Data Available | ❌ No | 🟢 LOW |
 | **NLP Scheduling** | ✅ Yes | ⚠️ Via Libraries | ❌ No | 🟢 LOW |
 
@@ -90,18 +89,6 @@ Result: 21 → 34 tools (+13)
 │  Pattern: Filter → Preview → Confirm → Execute │
 └─────────────────────────────────────────────────┘
 
-┌─────────────────────────────────────────────────┐
-│  Week 2-3: Templates & Smart Assistant          │
-├─────────────────────────────────────────────────┤
-│  📋 save-project-as-template                    │
-│  📋 create-from-template                        │
-│  📋 list-templates                              │
-│  📋 delete-template                             │
-│  🧠 schedule-assistant (multi-step workflow)    │
-│                                                  │
-│  Uses: FastMCP State Management v2.11+         │
-└─────────────────────────────────────────────────┘
-
 Result: 34 → 42-44 tools (+8-10)
 ```
 
@@ -163,29 +150,6 @@ async def bulk_complete_todos(ctx: Context):
     if confirmed:
         batch_complete(items)
         return "✓ Completed {len(items)} todos"
-```
-
-### Template System (State Management)
-
-```json
-// Template stored in FastMCP state
-{
-  "template_product_launch": {
-    "name": "Product Launch",
-    "variables": {
-      "product_name": {"type": "string", "required": true}
-    },
-    "structure": {
-      "project": {"title": "Launch {{product_name}}"},
-      "headings": [
-        {
-          "title": "Planning",
-          "todos": [...]
-        }
-      ]
-    }
-  }
-}
 ```
 
 ### Analytics Tools (Database Insights)
