@@ -97,6 +97,7 @@ TOOL_ANNOTATIONS: Dict[str, types.ToolAnnotations] = {
     "bulk-complete-todos": MODIFY_ANNOTATIONS,
     "bulk-schedule-todos": MODIFY_ANNOTATIONS,
     "bulk-tag-todos": MODIFY_ANNOTATIONS,
+    "bulk-move-todos": MODIFY_ANNOTATIONS,
     "add-project": ADD_ANNOTATIONS,
     "update-todo": UPDATE_ANNOTATIONS,
     "update-project": UPDATE_ANNOTATIONS,
@@ -3109,6 +3110,215 @@ async def bulk_tag_todos(ctx: Context) -> str:
     except Exception as e:
         logger.error(f"Error in bulk tag: {str(e)}")
         return _error_result(f"Error tagging todos: {str(e)}")
+
+@mcp.tool(name="bulk-move-todos", annotations=TOOL_ANNOTATIONS["bulk-move-todos"])
+async def bulk_move_todos(ctx: Context) -> str:
+    """
+    Move multiple todos to a different project or area (interactive)
+    
+    This is an interactive bulk operation that:
+    1. Asks for filter criteria (tag, project, area, or list)
+    2. Fetches matching incomplete todos
+    3. Shows preview of items to be moved
+    4. Asks for destination (project, area, or inbox)
+    5. Requires explicit confirmation ("yes")
+    6. Executes batch move with progress updates
+    
+    Safety features:
+    - Preview before execution (first 10 items shown)
+    - Explicit confirmation required
+    - 100-item batch limit
+    - Progress reporting every 10 items
+    - Continues on individual failures
+    
+    Returns:
+        Summary of moved todos with success/failure counts
+    """
+    try:
+        # Step 1: Elicit filter criteria
+        filter_input = await ctx.elicit(
+            "Enter filter criteria for todos to move:\n"
+            "  - tag:NAME (e.g., tag:work)\n"
+            "  - project:UUID (e.g., project:ABC123)\n"
+            "  - area:UUID (e.g., area:XYZ789)\n"
+            "  - inbox, today, upcoming\n"
+            "Filter: ",
+            response_type=str
+        )
+        
+        if filter_input.action != "accept" or not filter_input.data:
+            return "Operation cancelled"
+        
+        filter_input = filter_input.data.strip().lower()
+        if not filter_input:
+            return _error_result("No filter provided. Operation cancelled.")
+        
+        # Step 2: Fetch matching incomplete todos
+        await ctx.info(f"Fetching todos matching filter: {filter_input}...")
+        
+        todos = []
+        filter_description = filter_input
+        
+        if filter_input.startswith("tag:"):
+            tag_name = filter_input[4:].strip()
+            all_todos = things.todos()
+            todos = [t for t in all_todos if t.get('status') == 'incomplete' 
+                    and tag_name in [tag.get('title', '').lower() for tag in t.get('tags', [])]]
+            filter_description = f"tag '{tag_name}'"
+        elif filter_input.startswith("project:"):
+            project_uuid = filter_input[8:].strip()
+            project = things.get(project_uuid)
+            if not project or not isinstance(project, dict):
+                return _error_result(f"Project not found: {project_uuid}")
+            todos = things.todos(project=project_uuid)
+            todos = [t for t in todos if t.get('status') == 'incomplete']
+            filter_description = f"project '{project.get('title', project_uuid)}'"
+        elif filter_input.startswith("area:"):
+            area_uuid = filter_input[5:].strip()
+            area = things.get(area_uuid)
+            if not area or not isinstance(area, dict):
+                return _error_result(f"Area not found: {area_uuid}")
+            todos = things.todos(area=area_uuid)
+            todos = [t for t in todos if t.get('status') == 'incomplete']
+            filter_description = f"area '{area.get('title', area_uuid)}'"
+        elif filter_input == "inbox":
+            todos = things.inbox()
+            todos = [t for t in todos if t.get('status') == 'incomplete']
+            filter_description = "Inbox"
+        elif filter_input == "today":
+            todos = things.today()
+            todos = [t for t in todos if t.get('status') == 'incomplete']
+            filter_description = "Today"
+        elif filter_input == "upcoming":
+            todos = things.upcoming()
+            todos = [t for t in todos if t.get('status') == 'incomplete']
+            filter_description = "Upcoming"
+        else:
+            return _error_result(f"Invalid filter: {filter_input}. Use tag:NAME, project:UUID, area:UUID, inbox, today, or upcoming")
+        
+        if not todos:
+            return f"No incomplete todos found matching filter: {filter_description}"
+        
+        # Step 3: Show preview
+        total_count = len(todos)
+        preview_todos = todos[:10]
+        
+        preview = f"Found {total_count} incomplete todo(s) matching '{filter_description}':\n\n"
+        for i, todo in enumerate(preview_todos, 1):
+            title = todo.get('title', 'Untitled')
+            current_project = todo.get('project', {}).get('title', 'No project')
+            current_area = todo.get('area', {}).get('title', 'No area')
+            location = f" [Currently in: {current_project}"
+            if current_area != 'No area':
+                location += f", Area: {current_area}"
+            location += "]"
+            preview += f"  {i}. {title}{location}\n"
+        
+        if total_count > 10:
+            preview += f"\n  ... and {total_count - 10} more\n"
+        
+        # Check batch limit
+        if total_count > 100:
+            await ctx.warning(f"⚠️ Found {total_count} items, but batch limit is 100. Only first 100 will be moved.")
+            todos = todos[:100]
+            total_count = 100
+        
+        await ctx.info(preview)
+        
+        # Step 4: Elicit destination
+        destination_input = await ctx.elicit(
+            "\nWhere should these todos be moved?\n"
+            "  - project:UUID (move to specific project)\n"
+            "  - area:UUID (move to specific area)\n"
+            "  - inbox (move to inbox)\n"
+            "Destination: ",
+            response_type=str
+        )
+        
+        if destination_input.action != "accept" or not destination_input.data:
+            return "Operation cancelled"
+        
+        destination = destination_input.data.strip().lower()
+        if not destination:
+            return _error_result("No destination provided. Operation cancelled.")
+        
+        # Validate and parse destination
+        destination_uuid = None
+        destination_description = destination
+        
+        if destination.startswith("project:"):
+            destination_uuid = destination[8:].strip()
+            project = things.get(destination_uuid)
+            if not project or not isinstance(project, dict):
+                return _error_result(f"Project not found: {destination_uuid}")
+            destination_description = f"project '{project.get('title', destination_uuid)}'"
+        elif destination.startswith("area:"):
+            destination_uuid = destination[5:].strip()
+            area = things.get(destination_uuid)
+            if not area or not isinstance(area, dict):
+                return _error_result(f"Area not found: {destination_uuid}")
+            destination_description = f"area '{area.get('title', destination_uuid)}'"
+        elif destination == "inbox":
+            destination_uuid = "inbox"
+            destination_description = "Inbox"
+        else:
+            return _error_result(f"Invalid destination: {destination}. Use project:UUID, area:UUID, or inbox")
+        
+        # Step 5: Confirmation
+        confirmation = await ctx.elicit(
+            f"\n⚠️ About to move {total_count} todo(s) to {destination_description}.\n"
+            f"   Source: {filter_description}\n"
+            f"   Type 'yes' to confirm: ",
+            response_type=str
+        )
+        
+        if confirmation.action != "accept" or confirmation.data.strip().lower() != "yes":
+            return "Operation cancelled by user."
+        
+        # Step 6: Execute batch move
+        await ctx.info(f"Moving {total_count} todos to {destination_description}...")
+        
+        moved_count = 0
+        failed_count = 0
+        
+        for i, todo in enumerate(todos, 1):
+            try:
+                todo_uuid = todo.get('uuid')
+                if not todo_uuid:
+                    failed_count += 1
+                    continue
+                
+                # Build URL scheme command
+                url = f"things:///update?id={todo_uuid}&list-id={destination_uuid}"
+                execute_url(url)
+                moved_count += 1
+                
+                # Progress update every 10 items
+                if i % 10 == 0:
+                    await ctx.report_progress(i, total_count)
+                    
+            except Exception as e:
+                logger.error(f"Failed to move todo {todo.get('uuid')}: {str(e)}")
+                failed_count += 1
+                continue
+        
+        # Invalidate caches
+        cache_keys = ["get-todos", "get-inbox", "get-today", "get-upcoming", "get-projects"]
+        invalidate_caches_for(cache_keys)
+        
+        # Final report
+        result = "✓ Bulk move complete!\n"
+        result += f"  Successfully moved: {moved_count} todos\n"
+        if failed_count > 0:
+            result += f"  Failed: {failed_count} todos\n"
+        result += f"  Destination: {destination_description}\n"
+        result += f"  Source: {filter_description}"
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error in bulk move: {str(e)}")
+        return _error_result(f"Error moving todos: {str(e)}")
 
 @mcp.tool(name="add-project", annotations=TOOL_ANNOTATIONS["add-project"])
 def add_new_project(
