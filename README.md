@@ -284,7 +284,7 @@ Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_
 
 ```fish
 # For fish shell
-printf '%s\n' '{' '  "mcpServers": {' '    "Things 3": {' '      "command": "uv",' '      "args": [' '        "run",' '        "--directory",' '        "/absolute/path/to/things-fastmcp",' '        "server"' '      ]' '    }' '  }' '}' > ~/Library/Application\ Support/Claude/claude_desktop_config.json
+printf '%s\n' '{' '  "mcpServers": {' '    "things": {' '      "command": "uv",' '      "args": [' '        "run",' '        "--directory",' '        "/absolute/path/to/things-fastmcp",' '        "server"' '      ]' '    }' '  }' '}' > ~/Library/Application\ Support/Claude/claude_desktop_config.json
 ```
 
 ```bash
@@ -292,7 +292,7 @@ printf '%s\n' '{' '  "mcpServers": {' '    "Things 3": {' '      "command": "uv"
 cat > ~/Library/Application\ Support/Claude/claude_desktop_config.json << 'EOF'
 {
   "mcpServers": {
-    "Things 3": {
+    "things": {
       "command": "uv",
       "args": [
         "run",
