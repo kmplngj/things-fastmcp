@@ -480,7 +480,13 @@ async def get_inbox(
 
 @mcp.tool(name="get-today", annotations=TOOL_ANNOTATIONS["get-today"])
 @cached(ttl=CACHE_TTL.get("today", 30))
-async def get_today(limit: Optional[int] = None, sort_by: Optional[str] = None, ctx: Optional[Context] = None) -> str:
+async def get_today(
+    limit: Optional[int] = None,
+    sort_by: Optional[str] = None,
+    type_filter: Optional[str] = None,
+    deadline_filter: Optional[str] = None,
+    ctx: Optional[Context] = None
+) -> str:
     """
     Get todos due today
     
@@ -490,6 +496,8 @@ async def get_today(limit: Optional[int] = None, sort_by: Optional[str] = None, 
     Args:
         limit: Maximum number of results to return. Recommended: 10-50 for focused tasks. (optional)
         sort_by: Sort results by field - 'title', 'created', 'modified', 'deadline', 'start_date' (optional)
+        type_filter: Filter by item type - 'to-do', 'project', 'heading' (optional)
+        deadline_filter: Filter by deadline - 'overdue', 'today', 'upcoming', 'none' (optional)
     """
     import time
     start_time = time.time()
@@ -501,6 +509,10 @@ async def get_today(limit: Optional[int] = None, sort_by: Optional[str] = None, 
         if not todos:
             log_operation_end("get-today", True, time.time() - start_time, count=0)
             return "No items due today"
+
+        # Apply filters
+        todos = _apply_type_filter(todos, type_filter)
+        todos = _apply_deadline_filter(todos, deadline_filter)
 
         total_count = len(todos)
         
@@ -526,7 +538,13 @@ async def get_today(limit: Optional[int] = None, sort_by: Optional[str] = None, 
         raise
 
 @mcp.tool(name="get-upcoming", annotations=TOOL_ANNOTATIONS["get-upcoming"])
-async def get_upcoming(limit: Optional[int] = None, sort_by: Optional[str] = None, ctx: Optional[Context] = None) -> str:
+async def get_upcoming(
+    limit: Optional[int] = None,
+    sort_by: Optional[str] = None,
+    type_filter: Optional[str] = None,
+    deadline_filter: Optional[str] = None,
+    ctx: Optional[Context] = None
+) -> str:
     """
     Get upcoming todos
     
@@ -536,11 +554,17 @@ async def get_upcoming(limit: Optional[int] = None, sort_by: Optional[str] = Non
     Args:
         limit: Maximum number of results to return. Recommended: 10-50 for focused tasks. (optional)
         sort_by: Sort results by field - 'title', 'created', 'modified', 'deadline', 'start_date' (optional)
+        type_filter: Filter by item type - 'to-do', 'project', 'heading' (optional)
+        deadline_filter: Filter by deadline - 'overdue', 'today', 'upcoming', 'none' (optional)
     """
     todos = things.upcoming()
 
     if not todos:
         return "No upcoming items"
+
+    # Apply filters
+    todos = _apply_type_filter(todos, type_filter)
+    todos = _apply_deadline_filter(todos, deadline_filter)
 
     total_count = len(todos)
     
@@ -561,7 +585,13 @@ async def get_upcoming(limit: Optional[int] = None, sort_by: Optional[str] = Non
     return f"{metadata}\n\n{result}"
 
 @mcp.tool(name="get-anytime", annotations=TOOL_ANNOTATIONS["get-anytime"])
-async def get_anytime(limit: Optional[int] = None, sort_by: Optional[str] = None, ctx: Optional[Context] = None) -> str:
+async def get_anytime(
+    limit: Optional[int] = None,
+    sort_by: Optional[str] = None,
+    type_filter: Optional[str] = None,
+    deadline_filter: Optional[str] = None,
+    ctx: Optional[Context] = None
+) -> str:
     """
     Get todos from Anytime list
     
@@ -571,11 +601,17 @@ async def get_anytime(limit: Optional[int] = None, sort_by: Optional[str] = None
     Args:
         limit: Maximum number of results to return. Recommended: 10-50 for focused tasks. (optional)
         sort_by: Sort results by field - 'title', 'created', 'modified', 'deadline', 'start_date' (optional)
+        type_filter: Filter by item type - 'to-do', 'project', 'heading' (optional)
+        deadline_filter: Filter by deadline - 'overdue', 'today', 'upcoming', 'none' (optional)
     """
     todos = things.anytime()
 
     if not todos:
         return "No items in Anytime list"
+
+    # Apply filters
+    todos = _apply_type_filter(todos, type_filter)
+    todos = _apply_deadline_filter(todos, deadline_filter)
 
     total_count = len(todos)
     
@@ -596,7 +632,13 @@ async def get_anytime(limit: Optional[int] = None, sort_by: Optional[str] = None
     return f"{metadata}\n\n{result}"
 
 @mcp.tool(name="get-someday", annotations=TOOL_ANNOTATIONS["get-someday"])
-async def get_someday(limit: Optional[int] = None, sort_by: Optional[str] = None, ctx: Optional[Context] = None) -> str:
+async def get_someday(
+    limit: Optional[int] = None,
+    sort_by: Optional[str] = None,
+    type_filter: Optional[str] = None,
+    deadline_filter: Optional[str] = None,
+    ctx: Optional[Context] = None
+) -> str:
     """
     Get todos from Someday list
     
@@ -606,11 +648,17 @@ async def get_someday(limit: Optional[int] = None, sort_by: Optional[str] = None
     Args:
         limit: Maximum number of results to return. Recommended: 10-50 for focused tasks. (optional)
         sort_by: Sort results by field - 'title', 'created', 'modified', 'deadline', 'start_date' (optional)
+        type_filter: Filter by item type - 'to-do', 'project', 'heading' (optional)
+        deadline_filter: Filter by deadline - 'overdue', 'today', 'upcoming', 'none' (optional)
     """
     todos = things.someday()
 
     if not todos:
         return "No items in Someday list"
+
+    # Apply filters
+    todos = _apply_type_filter(todos, type_filter)
+    todos = _apply_deadline_filter(todos, deadline_filter)
 
     total_count = len(todos)
     
@@ -631,7 +679,14 @@ async def get_someday(limit: Optional[int] = None, sort_by: Optional[str] = None
     return f"{metadata}\n\n{result}"
 
 @mcp.tool(name="get-logbook", annotations=TOOL_ANNOTATIONS["get-logbook"])
-async def get_logbook(period: str = "7d", limit: int = 50, sort_by: Optional[str] = None, ctx: Optional[Context] = None) -> str:
+async def get_logbook(
+    period: str = "7d",
+    limit: int = 50,
+    sort_by: Optional[str] = None,
+    type_filter: Optional[str] = None,
+    deadline_filter: Optional[str] = None,
+    ctx: Optional[Context] = None
+) -> str:
     """
     Get completed todos from Logbook, defaults to last 7 days
 
@@ -642,11 +697,17 @@ async def get_logbook(period: str = "7d", limit: int = 50, sort_by: Optional[str
         period: Time period to look back (e.g., '3d', '1w', '2m', '1y'). Defaults to '7d'
         limit: Maximum number of entries to return. Defaults to 50. Recommended: 10-50 for focused tasks.
         sort_by: Sort results by field - 'title', 'created', 'modified', 'deadline', 'start_date' (optional)
+        type_filter: Filter by item type - 'to-do', 'project', 'heading' (optional)
+        deadline_filter: Filter by deadline - 'overdue', 'today', 'upcoming', 'none' (optional)
     """
     todos = things.last(period, status='completed')
 
     if not todos:
         return "No completed items found"
+
+    # Apply filters
+    todos = _apply_type_filter(todos, type_filter)
+    todos = _apply_deadline_filter(todos, deadline_filter)
 
     total_count = len(todos)
     
@@ -667,7 +728,13 @@ async def get_logbook(period: str = "7d", limit: int = 50, sort_by: Optional[str
     return f"{metadata}\n\n{result}"
 
 @mcp.tool(name="get-trash", annotations=TOOL_ANNOTATIONS["get-trash"])
-async def get_trash(limit: Optional[int] = None, sort_by: Optional[str] = None, ctx: Optional[Context] = None) -> str:
+async def get_trash(
+    limit: Optional[int] = None,
+    sort_by: Optional[str] = None,
+    type_filter: Optional[str] = None,
+    deadline_filter: Optional[str] = None,
+    ctx: Optional[Context] = None
+) -> str:
     """
     Get trashed todos
     
@@ -677,11 +744,17 @@ async def get_trash(limit: Optional[int] = None, sort_by: Optional[str] = None, 
     Args:
         limit: Maximum number of results to return. Recommended: 10-50 for focused tasks. (optional)
         sort_by: Sort results by field - 'title', 'created', 'modified', 'deadline', 'start_date' (optional)
+        type_filter: Filter by item type - 'to-do', 'project', 'heading' (optional)
+        deadline_filter: Filter by deadline - 'overdue', 'today', 'upcoming', 'none' (optional)
     """
     todos = things.trash()
 
     if not todos:
         return "No items in trash"
+
+    # Apply filters
+    todos = _apply_type_filter(todos, type_filter)
+    todos = _apply_deadline_filter(todos, deadline_filter)
 
     total_count = len(todos)
     

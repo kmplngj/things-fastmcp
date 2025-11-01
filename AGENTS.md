@@ -28,6 +28,34 @@ This file tracks the agent's thoughts, ideas, and work flow for the `things-fast
 
 ## Log
 ### 2025-11-01 (Late Night)
+- **Completed Enhanced Filter Parameters for all list tools (Task 1.3 Final)**
+  - **Motivation**: Provide consistent filtering across all query tools for better result refinement
+  - **Implementation**: Added `type_filter` and `deadline_filter` parameters to 6 remaining list tools:
+    * `get-today`: Filter today's items by type/deadline
+    * `get-upcoming`: Filter upcoming items by type/deadline
+    * `get-anytime`: Filter anytime items by type/deadline
+    * `get-someday`: Filter someday items by type/deadline
+    * `get-logbook`: Filter completed items by type/deadline
+    * `get-trash`: Filter trashed items by type/deadline
+  - **Total Coverage**: Now **10 of 11 query tools** have filter parameters:
+    * ✅ get-inbox (type + deadline filters)
+    * ✅ get-today (type + deadline filters)
+    * ✅ get-upcoming (type + deadline filters)
+    * ✅ get-anytime (type + deadline filters)
+    * ✅ get-someday (type + deadline filters)
+    * ✅ get-logbook (type + deadline filters)
+    * ✅ get-trash (type + deadline filters)
+    * ✅ get-tagged-items (type + status filters)
+    * ✅ get-recent (type + status + deadline filters)
+    * ✅ search-advanced (type + status + deadline filters)
+  - **Filter Capabilities**:
+    * **type_filter**: 'to-do', 'project', 'heading' (filter by item type)
+    * **deadline_filter**: 'overdue', 'today', 'upcoming', 'none' (filter by deadline status)
+  - **Pattern**: Reuses existing helper functions (_apply_type_filter, _apply_deadline_filter)
+  - **Verification**: ✅ Code compiles successfully
+  - **Impact**: Users can now refine results consistently across all list-based queries
+  - **Status**: Phase 1, Task 1.3 complete (90% of original plan - search-todos excluded as it has full-text search)
+
 - **Fixed MCP parameter validation for List[str] parameters**
   - **Issue**: Claude Desktop sending list parameters as JSON strings (e.g., '["ai", "tech"]' instead of ["ai", "tech"])
   - **Root Cause**: MCP client serialization inconsistency between tool calls
