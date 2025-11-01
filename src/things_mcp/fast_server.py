@@ -81,8 +81,6 @@ TOOL_ANNOTATIONS: Dict[str, types.ToolAnnotations] = {
     "count-advanced": READ_ONLY_ANNOTATIONS,
     "get-overdue-items": READ_ONLY_ANNOTATIONS,
     "get-items-due-soon": READ_ONLY_ANNOTATIONS,
-    "set-deadline": UPDATE_ANNOTATIONS,
-    "set-when": UPDATE_ANNOTATIONS,
     "get-checklist-items": READ_ONLY_ANNOTATIONS,
     "add-checklist-item": ADD_ANNOTATIONS,
     "update-checklist-item": UPDATE_ANNOTATIONS,
@@ -1315,188 +1313,6 @@ def get_items_due_soon(
     
     except Exception as e:
         return _error_result(f"Error getting items due soon: {str(e)}")
-
-@mcp.tool(name="set-deadline", annotations=TOOL_ANNOTATIONS["set-deadline"])
-def set_deadline(
-    todo_uuid: str,
-    deadline: str
-) -> str:
-    """
-    Set or update the deadline for a todo.
-    
-    Uses Things URL scheme to set a deadline date. The deadline can be in ISO format
-    (YYYY-MM-DD) or a natural language date that can be parsed.
-    
-    Args:
-        todo_uuid: UUID of the todo to update
-        deadline: Deadline date in YYYY-MM-DD format (e.g., '2025-12-31')
-                 Special values: 'today', 'tomorrow', 'none' (to clear deadline)
-    
-    Returns:
-        Success message with the todo title and new deadline
-    
-    Example:
-        result = set_deadline(todo_uuid="ABC123", deadline="2025-12-31")
-        result = set_deadline(todo_uuid="ABC123", deadline="today")
-        result = set_deadline(todo_uuid="ABC123", deadline="none")  # Clear deadline
-    """
-    try:
-        from datetime import datetime, date, timedelta
-        import urllib.parse
-        
-        # Validate todo exists
-        todo = things.get(todo_uuid)
-        if not todo:
-            return _error_result(f"Todo not found: {todo_uuid}")
-        
-        if isinstance(todo, list):
-            if not todo:
-                return _error_result(f"Todo not found: {todo_uuid}")
-            todo = todo[0]
-        
-        if todo.get('type') != 'to-do':
-            return _error_result(f"Item {todo_uuid} is not a todo (type: {todo.get('type')})")
-        
-        # Parse deadline
-        parsed_deadline = None
-        today = date.today()
-        
-        if deadline.lower() == 'none':
-            # Clear deadline - pass empty string
-            parsed_deadline = ''
-            deadline_display = "cleared"
-        elif deadline.lower() == 'today':
-            parsed_deadline = today.strftime('%Y-%m-%d')
-            deadline_display = f"{parsed_deadline} (today)"
-        elif deadline.lower() == 'tomorrow':
-            tomorrow = today + timedelta(days=1)
-            parsed_deadline = tomorrow.strftime('%Y-%m-%d')
-            deadline_display = f"{parsed_deadline} (tomorrow)"
-        else:
-            # Try to parse as ISO date
-            try:
-                parsed_date = datetime.strptime(deadline, '%Y-%m-%d').date()
-                parsed_deadline = parsed_date.strftime('%Y-%m-%d')
-                deadline_display = parsed_deadline
-            except ValueError:
-                return _error_result(f"Invalid deadline format: '{deadline}'. Use YYYY-MM-DD, 'today', 'tomorrow', or 'none'")
-        
-        # Build Things URL
-        if parsed_deadline == '':
-            # Clear deadline - don't include deadline parameter
-            url = f"things:///update?id={urllib.parse.quote(todo_uuid)}&deadline="
-        else:
-            url = f"things:///update?id={urllib.parse.quote(todo_uuid)}&deadline={urllib.parse.quote(parsed_deadline)}"
-        
-        # Execute URL scheme
-        success = execute_url(url)
-        
-        if success:
-            # Invalidate cache
-            invalidate_caches_for(["get-todos"])
-            
-            todo_title = todo.get('title', 'Untitled')
-            return f"✓ Set deadline for '{todo_title}' to: {deadline_display}"
-        else:
-            return _error_result(f"Failed to set deadline for todo: {todo_uuid}")
-    
-    except Exception as e:
-        return _error_result(f"Error setting deadline: {str(e)}")
-
-@mcp.tool(name="set-when")
-def set_when(
-    todo_uuid: str,
-    when: str
-) -> str:
-    """
-    Set or update when a todo is scheduled (the start date).
-    
-    Uses Things URL scheme to set the schedule. This moves the todo to a specific list
-    (Today, Tomorrow, Evening, Anytime, Someday) or schedules it for a specific date.
-    
-    Args:
-        todo_uuid: UUID of the todo to update
-        when: When to schedule - supports:
-              - 'today': Schedule for today
-              - 'tomorrow': Schedule for tomorrow
-              - 'evening': Schedule for this evening
-              - 'anytime': Move to Anytime list
-              - 'someday': Move to Someday list
-              - YYYY-MM-DD: Schedule for specific date
-              - 'none' or 'inbox': Move to Inbox (unschedule)
-    
-    Returns:
-        Success message with the todo title and new schedule
-    
-    Example:
-        result = set_when(todo_uuid="ABC123", when="today")
-        result = set_when(todo_uuid="ABC123", when="2025-12-25")
-        result = set_when(todo_uuid="ABC123", when="anytime")
-        result = set_when(todo_uuid="ABC123", when="inbox")  # Unschedule
-    """
-    try:
-        from datetime import datetime
-        import urllib.parse
-        
-        # Validate todo exists
-        todo = things.get(todo_uuid)
-        if not todo:
-            return _error_result(f"Todo not found: {todo_uuid}")
-        
-        if isinstance(todo, list):
-            if not todo:
-                return _error_result(f"Todo not found: {todo_uuid}")
-            todo = todo[0]
-        
-        if todo.get('type') != 'to-do':
-            return _error_result(f"Item {todo_uuid} is not a todo (type: {todo.get('type')})")
-        
-        # Validate and normalize 'when' parameter
-        when_lower = when.lower()
-        valid_keywords = ['today', 'tomorrow', 'evening', 'anytime', 'someday', 'none', 'inbox']
-        
-        if when_lower in valid_keywords:
-            # Use keyword as-is (Things URL scheme handles these)
-            if when_lower in ['none', 'inbox']:
-                # Special handling for unscheduling - use empty string
-                schedule_param = ''
-                when_display = "moved to Inbox (unscheduled)"
-            else:
-                schedule_param = when_lower
-                when_display = when_lower.capitalize()
-        else:
-            # Try to parse as date (YYYY-MM-DD)
-            try:
-                datetime.strptime(when, '%Y-%m-%d')  # Validate date format
-                schedule_param = when
-                when_display = when
-            except ValueError:
-                return _error_result(
-                    f"Invalid 'when' value: '{when}'. "
-                    f"Use: today, tomorrow, evening, anytime, someday, inbox, or YYYY-MM-DD"
-                )
-        
-        # Build Things URL
-        if schedule_param == '':
-            # Unschedule - move to inbox by omitting when parameter
-            url = f"things:///update?id={urllib.parse.quote(todo_uuid)}&when="
-        else:
-            url = f"things:///update?id={urllib.parse.quote(todo_uuid)}&when={urllib.parse.quote(schedule_param)}"
-        
-        # Execute URL scheme
-        success = execute_url(url)
-        
-        if success:
-            # Invalidate relevant caches
-            invalidate_caches_for(["get-todos", "get-inbox", "get-today", "get-upcoming", "get-anytime", "get-someday"])
-            
-            todo_title = todo.get('title', 'Untitled')
-            return f"✓ Updated schedule for '{todo_title}' to: {when_display}"
-        else:
-            return _error_result(f"Failed to update schedule for todo: {todo_uuid}")
-    
-    except Exception as e:
-        return _error_result(f"Error updating schedule: {str(e)}")
 
 # ============================================================================
 # Checklist Operations (Phase 1: Critical Gaps)
@@ -3766,16 +3582,46 @@ def update_task(
 ) -> str:
     """
     Update an existing todo in Things.
+    
+    This is the primary tool for modifying todos. All parameters are optional - 
+    only provide the ones you want to change.
 
     Args:
         id: ID of the todo to update
-        title: New title
-        notes: New notes
-        when: New schedule
-        deadline: New deadline
-        tags: New tags. Missing tags will be created automatically.
-        completed: Mark as completed
-        canceled: Mark as canceled
+        title: New title for the todo
+        notes: New notes/description
+        when: Schedule the todo - supports:
+              - 'today': Schedule for today
+              - 'tomorrow': Schedule for tomorrow  
+              - 'evening': Schedule for this evening
+              - 'anytime': Move to Anytime list
+              - 'someday': Move to Someday list
+              - YYYY-MM-DD: Schedule for specific date (e.g., '2025-12-25')
+              - Empty string: Move to Inbox (unschedule)
+        deadline: Set a deadline - supports:
+                 - YYYY-MM-DD: Specific date (e.g., '2025-12-31')
+                 - 'today': Today's date
+                 - 'tomorrow': Tomorrow's date
+                 - Empty string: Clear deadline
+        tags: New tags (replaces existing tags). Missing tags will be created automatically.
+        completed: Set to True to mark as completed
+        canceled: Set to True to mark as canceled
+    
+    Examples:
+        # Schedule for today
+        update_todo(id="ABC123", when="today")
+        
+        # Set deadline to specific date
+        update_todo(id="ABC123", deadline="2025-12-31")
+        
+        # Update multiple fields at once
+        update_todo(id="ABC123", when="tomorrow", deadline="2025-12-15", tags=["urgent", "work"])
+        
+        # Complete a todo
+        update_todo(id="ABC123", completed=True)
+        
+        # Unschedule (move to Inbox)
+        update_todo(id="ABC123", when="")
     """
     try:
         # Ensure Things app is running
