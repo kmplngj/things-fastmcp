@@ -856,8 +856,12 @@ def count_items() -> str:
     - Someday: Items in the someday list
     - Logbook: Completed/cancelled items
     - Trash: Deleted items
+    
+    Note: This is a read-only operation that queries the local Things database directly.
+    No URL schemes or authentication tokens are needed.
     """
     try:
+        logger.debug("count-items: Starting read-only database queries")
         counts = {
             'inbox': len(things.inbox()),
             'today': len(things.today()),
@@ -867,6 +871,7 @@ def count_items() -> str:
             'logbook': len(things.logbook()),
             'trash': len(things.trash())
         }
+        logger.debug(f"count-items: Successfully retrieved counts: {counts}")
         
         result_lines = [
             "Item counts by area:",
@@ -892,6 +897,7 @@ def count_items() -> str:
         
         return "\n".join(result_lines)
     except Exception as e:
+        logger.error(f"count-items error: {str(e)}", exc_info=True)
         return _error_result(f"Error getting item counts: {str(e)}")
 
 @mcp.tool(name="count-search", annotations=TOOL_ANNOTATIONS.get("count-search", READ_ONLY_ANNOTATIONS))
