@@ -28,6 +28,37 @@ This file tracks the agent's thoughts, ideas, and work flow for the `things-fast
 
 ## Log
 ### 2025-11-01 (Late Night) - Phase 2 Implementation Continues
+- **Implemented bulk-move-todos (Task 2.1.4)** ✅
+  - **Motivation**: Enable users to move multiple todos to different projects or areas at once
+  - **Implementation**:
+    * Multi-step elicitation workflow (6 steps):
+      1. Filter selection (tag, project, area, inbox, today, upcoming)
+      2. Fetch matching incomplete todos
+      3. Preview with current location (project + area)
+      4. Destination selection (project:UUID, area:UUID, inbox)
+      5. Explicit confirmation (must type "yes")
+      6. Batch execution with progress updates every 10 items
+    * Safety features:
+      - 100-item batch limit with warning
+      - Preview shows current project and area for each item
+      - Explicit confirmation required
+      - Progress reporting for long operations
+      - Continue on individual failures
+      - Validates destination exists before execution
+  - **Technical Details**:
+    * Move operation: `things:///update?id=UUID&list-id=DESTINATION`
+    * Destination validation via things.get() for projects/areas
+    * Cache invalidation for todos, inbox, today, upcoming, projects
+  - **Code Quality**:
+    * ✅ Compiles successfully (~200 lines)
+    * ✅ Zero lint errors
+    * Follows established bulk operation pattern
+    * Added to TOOL_ANNOTATIONS dict
+  - **Git Commit**: 4368058 "feat: Implement bulk-move-todos interactive tool (Task 2.1.4)"
+  - **Progress**: Task 2.1.4 complete (4/10 Phase 2 tools, 40% of Phase 2)
+  - **Milestone**: All 4 bulk operation tools complete!
+  - **Next**: Task 2.2 - Smart Scheduling Assistant (or continue with remaining Phase 2 tools)
+
 - **Implemented bulk-tag-todos (Task 2.1.3)** ✅
   - **Motivation**: Enable users to add or remove tags from multiple todos at once
   - **Implementation**:
