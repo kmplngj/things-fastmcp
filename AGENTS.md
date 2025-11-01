@@ -27,6 +27,21 @@ This file tracks the agent's thoughts, ideas, and work flow for the `things-fast
 - Run `ruff check .` and `pytest` after modifications.
 
 ## Log
+### 2025-11-01 (Late Night)
+- **Fixed MCP parameter validation for List[str] parameters**
+  - **Issue**: Claude Desktop sending list parameters as JSON strings (e.g., '["ai", "tech"]' instead of ["ai", "tech"])
+  - **Root Cause**: MCP client serialization inconsistency between tool calls
+  - **Solution**: Added defensive JSON parsing to all tools with List[str] parameters:
+    * `update-todo`: tags parameter
+    * `add-todo`: tags and checklist_items parameters
+    * `add-project`: tags and todos parameters
+    * `update-project`: tags parameter
+    * `show-item`: filter_tags parameter
+  - **Pattern**: Check `isinstance(param, str)`, attempt `json.loads()`, fallback to comma/newline split
+  - **Verification**: ✅ Code compiles successfully
+  - **Impact**: All list parameters now handle both native lists and JSON string inputs
+  - **Status**: Production blocker resolved, ready for user testing
+
 ### 2025-11-01
 - **Added FastMCP middleware and interactive todo creation**
   - **Phase 1: Performance Monitoring**
