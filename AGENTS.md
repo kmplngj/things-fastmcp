@@ -27,6 +27,49 @@ This file tracks the agent's thoughts, ideas, and work flow for the `things-fast
 - Run `ruff check .` and `pytest` after modifications.
 
 ## Log
+### 2025-11-01 (Late Night) - Phase 2 Implementation Continues
+- **Implemented bulk-schedule-todos (Task 2.1.2)** ✅
+  - **Motivation**: Enable users to reschedule multiple todos at once based on filters
+  - **Implementation**:
+    * Multi-step elicitation workflow:
+      1. Filter selection (tag, project, area, inbox, today, upcoming)
+      2. Fetch matching incomplete todos
+      3. Schedule destination (today, tomorrow, evening, anytime, someday, YYYY-MM-DD)
+      4. Preview (first 10 items + total count)
+      5. Explicit confirmation (must type "yes")
+      6. Batch execution with progress updates every 10 items
+    * Safety features:
+      - 100-item batch limit with warning
+      - Preview shows what will be affected
+      - Explicit confirmation required
+      - Progress reporting for long operations
+      - Continue on individual failures
+    * Schedule options:
+      - Natural language: today, tomorrow, evening, anytime, someday
+      - Specific dates: YYYY-MM-DD format
+      - Validates date format before execution
+  - **Technical Details**:
+    * Added MODIFY_ANNOTATIONS to TOOL_ANNOTATIONS dict
+    * Uses ctx.elicit() with response_type=str
+    * Proper result handling: .action != "accept" cancels operation
+    * Date parsing with datetime.strptime for validation
+    * Things URL scheme: `things:///update?id=UUID&when=DESTINATION`
+    * Cache invalidation for inbox, today, upcoming, anytime, someday lists
+  - **Code Quality**:
+    * ✅ Compiles successfully (~210 lines)
+    * ✅ Zero lint errors
+    * Follows bulk-complete-todos pattern
+    * Comprehensive error handling with try/except
+    * Added to TOOL_ANNOTATIONS dict
+  - **Pattern Reused**:
+    * Elicitation → Fetch → Preview → Confirm → Execute → Report
+    * Progress updates every 10 items
+    * Final statistics with success/failure counts
+    * MODIFY_ANNOTATIONS for bulk operations
+  - **Git Commit**: fc5fc71 "feat: Implement bulk-schedule-todos interactive tool (Task 2.1.2)"
+  - **Progress**: Task 2.1.2 complete (2/10 Phase 2 tools, 20% of Phase 2)
+  - **Next**: Task 2.1.3 - Implement bulk-tag-todos
+
 ### 2025-11-01 (Late Night) - Critical Production Bug Fix
 - **Fixed Pydantic validation error for List[str] parameters (Production Blocker Resolved)** ✅
   - **Issue**: Claude Desktop users reported: `1 validation error for call[update_task] tags Input should be a valid list [type=list_type, input_value='["tech", "smarthome"]', input_type=str]`
