@@ -23,7 +23,7 @@ from .formatters import format_todo, format_project, format_area, format_tag
 from .utils import app_state
 from .url_scheme import (
     add_todo, add_project, update_todo, update_project, show,
-    search, launch_things, execute_url
+    launch_things, execute_url
 )
 
 # Import and configure enhanced logging
@@ -91,6 +91,17 @@ MODIFY_ANNOTATIONS = types.ToolAnnotations(
 )
 
 TOOL_ANNOTATIONS: Dict[str, types.ToolAnnotations] = {
+    # v3.0.0 Composite Tools
+    "list-items": READ_ONLY_ANNOTATIONS,
+    "count": READ_ONLY_ANNOTATIONS,
+    "search": READ_ONLY_ANNOTATIONS,
+    "deadline-items": READ_ONLY_ANNOTATIONS,
+    "manage-heading": UPDATE_ANNOTATIONS,
+    # v3.0.0 Dynamic Tool Management
+    "enable-advanced-features": UPDATE_ANNOTATIONS,
+    "disable-advanced-features": UPDATE_ANNOTATIONS,
+    "get-tool-categories": READ_ONLY_ANNOTATIONS,
+    # Original tools (backward compatibility - deprecated in v3.0.0)
     "get-inbox": READ_ONLY_ANNOTATIONS,
     "get-today": READ_ONLY_ANNOTATIONS,
     "get-upcoming": READ_ONLY_ANNOTATIONS,
@@ -460,6 +471,955 @@ mcp.add_middleware(ErrorHandlingMiddleware(
     transform_errors=True,   # Transform errors to consistent format
 ))
 logger.info("FastMCP middleware configured successfully")
+
+# ============================================================================
+# DYNAMIC TOOL MANAGEMENT (v3.0.0 Phase 2)
+# ============================================================================
+
+# Storage for tool handles to enable dynamic enable/disable
+ADVANCED_TOOL_HANDLES: Dict[str, List[Any]] = {
+    "analytics": [],
+    "checklists": [],
+    "structure": [],
+    "deprecated": []
+}
+
+# Track which categories are enabled
+ENABLED_CATEGORIES: Dict[str, bool] = {
+    "analytics": False,
+    "checklists": False,
+    "structure": False
+}
+
+def register_advanced_tool(category: str, tool_handle):
+    """Register a tool handle for dynamic management"""
+    if category in ADVANCED_TOOL_HANDLES:
+        ADVANCED_TOOL_HANDLES[category].append(tool_handle)
+        tool_handle.disable()  # Start disabled
+    return tool_handle
+
+def enable_tool_category(category: str) -> int:
+    """Enable all tools in a category. Returns count of enabled tools."""
+    if category not in ADVANCED_TOOL_HANDLES:
+        return 0
+    
+    if category == "all":
+        count = 0
+        for cat in ["analytics", "checklists", "structure"]:
+            count += enable_tool_category(cat)
+        return count
+    
+    ENABLED_CATEGORIES[category] = True
+    for tool in ADVANCED_TOOL_HANDLES[category]:
+        tool.enable()  # Triggers tools/list_changed notification
+    
+    return len(ADVANCED_TOOL_HANDLES[category])
+
+def disable_tool_category(category: str) -> int:
+    """Disable all tools in a category. Returns count of disabled tools."""
+    if category not in ADVANCED_TOOL_HANDLES:
+        return 0
+    
+    if category == "all":
+        count = 0
+        for cat in ["analytics", "checklists", "structure"]:
+            count += disable_tool_category(cat)
+        return count
+    
+    ENABLED_CATEGORIES[category] = False
+    for tool in ADVANCED_TOOL_HANDLES[category]:
+        tool.disable()  # Triggers tools/list_changed notification
+    
+    return len(ADVANCED_TOOL_HANDLES[category])
+
+def get_category_status() -> Dict[str, Any]:
+    """Get current status of all tool categories"""
+    return {
+        "analytics": {
+            "enabled": ENABLED_CATEGORIES["analytics"],
+            "tool_count": len(ADVANCED_TOOL_HANDLES["analytics"])
+        },
+        "checklists": {
+            "enabled": ENABLED_CATEGORIES["checklists"],
+            "tool_count": len(ADVANCED_TOOL_HANDLES["checklists"])
+        },
+        "structure": {
+            "enabled": ENABLED_CATEGORIES["structure"],
+            "tool_count": len(ADVANCED_TOOL_HANDLES["structure"])
+        }
+    }
+
+# ============================================================================
+# COMPOSITE TOOLS (v3.0.0) - Consolidated from 15 individual tools
+# ============================================================================
+
+@mcp.tool(name="list-items", annotations=READ_ONLY_ANNOTATIONS)
+async def list_items(
+    list_type: str,
+    type_filter: Optional[str] = None,
+    deadline_filter: Optional[str] = None,
+    limit: Optional[int] = None,
+    sort_by: Optional[str] = None,
+    ctx: Optional[Context] = None
+) -> str:
+    """
+    Get items from a specific Things list (v3.0.0 composite tool).
+    
+    Replaces: get-inbox, get-today, get-upcoming, get-anytime, get-someday, get-logbook, get-trash
+    
+    Args:
+        list_type: Which list to query - 'inbox', 'today', 'upcoming', 'anytime', 'someday', 'logbook', 'trash'
+        type_filter: Filter by type - 'to-do', 'project', 'heading', 'area' (optional)
+        deadline_filter: Filter by deadline - 'overdue', 'today', 'upcoming', 'none' (optional)
+        limit: Maximum items to return (default: 20, recommended to avoid context overflow)
+        sort_by: Sort order - 'title', 'created', 'modified', 'deadline', 'start_date' (optional)
+    
+    Returns:
+        Formatted list of items with metadata
+    
+    Examples:
+        list_items("today", limit=10)
+        list_items("inbox", type_filter="to-do", deadline_filter="overdue")
+        list_items("logbook", limit=50)
+    """
+    import time
+    start_time = time.time()
+    log_operation_start(f"list-items ({list_type})")
+    
+    # Validate list_type
+    valid_types = ["inbox", "today", "upcoming", "anytime", "someday", "logbook", "trash"]
+    if list_type not in valid_types:
+        log_operation_end(f"list-items ({list_type})", False, time.time() - start_time)
+        return f"Error: Invalid list_type '{list_type}'. Must be one of: {', '.join(valid_types)}"
+    
+    try:
+        # Route to appropriate Things API method
+        items = []
+        if list_type == "inbox":
+            items = things.inbox()
+        elif list_type == "today":
+            items = things.today()
+        elif list_type == "upcoming":
+            items = things.upcoming()
+        elif list_type == "anytime":
+            items = things.anytime()
+        elif list_type == "someday":
+            items = things.someday()
+        elif list_type == "logbook":
+            items = things.logbook()
+        elif list_type == "trash":
+            items = things.trash()
+        
+        if not items:
+            log_operation_end(f"list-items ({list_type})", True, time.time() - start_time, count=0)
+            return f"No items found in {list_type}"
+        
+        # Apply filters
+        if type_filter:
+            items = _apply_type_filter(items, type_filter)
+        if deadline_filter:
+            items = _apply_deadline_filter(items, deadline_filter)
+        
+        if not items:
+            filter_desc = []
+            if type_filter:
+                filter_desc.append(f"type={type_filter}")
+            if deadline_filter:
+                filter_desc.append(f"deadline={deadline_filter}")
+            log_operation_end(f"list-items ({list_type})", True, time.time() - start_time, count=0)
+            return f"No {list_type} items matching filters: {', '.join(filter_desc)}"
+        
+        total_count = len(items)
+        
+        # Warn if returning large result set without limit
+        if ctx and not limit and total_count > 20:
+            await ctx.warning(
+                f"Returning all {total_count} {list_type} items without a limit. "
+                f"Consider using limit parameter (e.g., limit=10) to reduce context window usage.",
+                extra={"total_items": total_count, "limit_used": False, "list_type": list_type}
+            )
+        
+        # Apply sorting and limiting
+        items = _apply_sort_and_limit(items, sort_by, limit)
+        
+        # Format results
+        result_lines = [f"📋 {list_type.capitalize()} Items"]
+        for item in items:
+            status_icon = "✓" if item.get('status') == 'completed' else "○"
+            title = item.get('title', 'Untitled')
+            uuid = item.get('uuid', 'unknown')
+            item_type = item.get('type', 'to-do')
+            
+            # Add deadline badge if present
+            deadline_badge = ""
+            if item.get('deadline'):
+                from datetime import datetime, date
+                deadline_date = datetime.fromisoformat(item['deadline']).date()
+                today = date.today()
+                if deadline_date < today:
+                    deadline_badge = " ⚠️"
+                elif deadline_date == today:
+                    deadline_badge = " 🔴"
+            
+            result_lines.append(f"{status_icon} {title} ({item_type}) {deadline_badge}")
+            result_lines.append(f"   ID: {uuid}")
+        
+        # Add metadata
+        extra_info = f"from {total_count} total" if limit and total_count > len(items) else ""
+        metadata = _format_metadata(len(items), limit, sort_by, extra=extra_info)
+        result_lines.append(f"\n{metadata}")
+        
+        result = "\n".join(result_lines)
+        log_operation_end(f"list-items ({list_type})", True, time.time() - start_time, count=len(items))
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error in list-items ({list_type}): {str(e)}")
+        log_operation_end(f"list-items ({list_type})", False, time.time() - start_time)
+        return _error_result(f"Error getting {list_type} items: {str(e)}")
+
+
+@mcp.tool(name="count", annotations=READ_ONLY_ANNOTATIONS)
+async def count(
+    count_type: str,
+    query: Optional[str] = None,
+    tag: Optional[str] = None,
+    project_uuid: Optional[str] = None,
+    title_filter: Optional[str] = None,
+    type_filter: Optional[str] = None,
+    status_filter: Optional[str] = None,
+    ctx: Optional[Context] = None
+) -> str:
+    """
+    Count items in various contexts without fetching full data (v3.0.0 composite tool).
+    
+    Replaces: count-items, count-search, count-tagged-items, count-project-items, count-advanced
+    
+    Args:
+        count_type: What to count - 'lists', 'search', 'tag', 'project', 'advanced'
+        query: Search query (required for count_type="search")
+        tag: Tag name (required for count_type="tag")
+        project_uuid: Project UUID (required for count_type="project")
+        title_filter: Title pattern (for count_type="advanced")
+        type_filter: Type filter (for count_type="advanced")
+        status_filter: Status filter (for count_type="advanced")
+    
+    Returns:
+        Count summary with recommendations for limiting
+    
+    Examples:
+        count("lists")  # Count all lists
+        count("search", query="meeting notes")
+        count("tag", tag="work")
+        count("project", project_uuid="...")
+        count("advanced", title_filter="review", status_filter="incomplete")
+    """
+    import time
+    start_time = time.time()
+    log_operation_start(f"count ({count_type})")
+    
+    # Validate count_type
+    valid_types = ["lists", "search", "tag", "project", "advanced"]
+    if count_type not in valid_types:
+        log_operation_end(f"count ({count_type})", False, time.time() - start_time)
+        return f"Error: Invalid count_type '{count_type}'. Must be one of: {', '.join(valid_types)}"
+    
+    try:
+        result_lines = ["📊 Item Counts"]
+        
+        if count_type == "lists":
+            # Count all main lists
+            inbox_count = len(things.inbox())
+            today_count = len(things.today())
+            upcoming_count = len(things.upcoming())
+            anytime_count = len(things.anytime())
+            someday_count = len(things.someday())
+            logbook_count = len(things.logbook())
+            trash_count = len(things.trash())
+            
+            result_lines.append(f"\n📥 Inbox: {inbox_count} items")
+            result_lines.append(f"☀️ Today: {today_count} items")
+            result_lines.append(f"📅 Upcoming: {upcoming_count} items")
+            result_lines.append(f"🔵 Anytime: {anytime_count} items")
+            result_lines.append(f"💤 Someday: {someday_count} items")
+            result_lines.append(f"✅ Logbook: {logbook_count} items")
+            result_lines.append(f"🗑️ Trash: {trash_count} items")
+            
+            # Add recommendations
+            high_count_lists = []
+            if inbox_count > 20:
+                high_count_lists.append(f"inbox ({inbox_count})")
+            if today_count > 20:
+                high_count_lists.append(f"today ({today_count})")
+            if upcoming_count > 20:
+                high_count_lists.append(f"upcoming ({upcoming_count})")
+            
+            if high_count_lists:
+                result_lines.append(f"\n💡 Recommendation: Use limit parameter for: {', '.join(high_count_lists)}")
+        
+        elif count_type == "search":
+            if not query:
+                log_operation_end(f"count ({count_type})", False, time.time() - start_time)
+                return "Error: 'query' parameter required for count_type='search'"
+            
+            results = things.search(query)
+            count = len(results)
+            result_lines.append(f"\n🔍 Search '{query}': {count} items")
+            
+            if count > 20:
+                result_lines.append("💡 Recommendation: Use limit parameter when fetching (e.g., limit=20)")
+        
+        elif count_type == "tag":
+            if not tag:
+                log_operation_end(f"count ({count_type})", False, time.time() - start_time)
+                return "Error: 'tag' parameter required for count_type='tag'"
+            
+            tagged_todos = things.todos(tag=tag)
+            count = len(tagged_todos)
+            result_lines.append(f"\n🏷️ Tag '{tag}': {count} items")
+            
+            if count > 20:
+                result_lines.append("💡 Recommendation: Use limit parameter when fetching")
+        
+        elif count_type == "project":
+            if not project_uuid:
+                log_operation_end(f"count ({count_type})", False, time.time() - start_time)
+                return "Error: 'project_uuid' parameter required for count_type='project'"
+            
+            project = things.get(project_uuid)
+            if not project:
+                log_operation_end(f"count ({count_type})", False, time.time() - start_time)
+                return f"Error: Project not found: {project_uuid}"
+            
+            if isinstance(project, dict):
+                items = project.get('items', [])
+                count = len(items)
+                project_title = project.get('title', 'Untitled')
+            else:
+                count = 0
+                project_title = 'Unknown'
+            result_lines.append(f"\n📁 Project '{project_title}': {count} items")
+        
+        elif count_type == "advanced":
+            # Count with advanced filters
+            all_items = things.todos()
+            
+            # Apply filters
+            if title_filter:
+                all_items = [item for item in all_items if title_filter.lower() in item.get('title', '').lower()]
+            if type_filter:
+                all_items = _apply_type_filter(all_items, type_filter)
+            if status_filter:
+                all_items = _apply_status_filter(all_items, status_filter)
+            
+            count = len(all_items)
+            filter_desc = []
+            if title_filter:
+                filter_desc.append(f"title='{title_filter}'")
+            if type_filter:
+                filter_desc.append(f"type={type_filter}")
+            if status_filter:
+                filter_desc.append(f"status={status_filter}")
+            
+            result_lines.append(f"\n🎯 Advanced count ({', '.join(filter_desc)}): {count} items")
+            
+            if count > 20:
+                result_lines.append("💡 Recommendation: Use limit parameter when fetching")
+        
+        result = "\n".join(result_lines)
+        log_operation_end(f"count ({count_type})", True, time.time() - start_time)
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error in count ({count_type}): {str(e)}")
+        log_operation_end(f"count ({count_type})", False, time.time() - start_time)
+        return _error_result(f"Error counting {count_type}: {str(e)}")
+
+
+@mcp.tool(name="search", annotations=READ_ONLY_ANNOTATIONS)
+async def search(
+    query: Optional[str] = None,
+    title_filter: Optional[str] = None,
+    notes_filter: Optional[str] = None,
+    type_filter: Optional[str] = None,
+    status_filter: Optional[str] = None,
+    deadline_filter: Optional[str] = None,
+    limit: Optional[int] = 20,
+    offset: Optional[int] = 0,
+    sort_by: Optional[str] = "modified",
+    ctx: Optional[Context] = None
+) -> str:
+    """
+    Search for items with optional advanced filters (v3.0.0 composite tool).
+    
+    Replaces: search-todos, search-advanced
+    
+    Args:
+        query: Full-text search query (searches title and notes) - if provided, uses Things search API
+        title_filter: Filter by title substring (manual filter)
+        notes_filter: Filter by notes substring (manual filter)
+        type_filter: Filter by type - 'to-do', 'project', 'heading', 'area'
+        status_filter: Filter by status - 'incomplete', 'completed', 'canceled'
+        deadline_filter: Filter by deadline - 'overdue', 'today', 'upcoming', 'none'
+        limit: Maximum items to return (default: 20)
+        offset: Pagination offset (default: 0)
+        sort_by: Sort order - 'title', 'created', 'modified', 'deadline' (default: 'modified')
+    
+    Returns:
+        Search results with pagination metadata
+    
+    Examples:
+        search(query="meeting")
+        search(title_filter="review", status_filter="incomplete", deadline_filter="overdue")
+        search(query="project", type_filter="to-do", limit=10)
+    """
+    import time
+    start_time = time.time()
+    log_operation_start("search")
+    
+    try:
+        # Use Things search API if query provided, otherwise get all todos
+        if query:
+            todos = things.search(query)
+        else:
+            todos = things.todos()
+        
+        if not todos:
+            log_operation_end("search", True, time.time() - start_time, count=0)
+            return "No items found"
+        
+        # Apply manual filters
+        if title_filter:
+            todos = [t for t in todos if title_filter.lower() in t.get('title', '').lower()]
+        if notes_filter:
+            todos = [t for t in todos if notes_filter.lower() in t.get('notes', '').lower()]
+        if type_filter:
+            todos = _apply_type_filter(todos, type_filter)
+        if status_filter:
+            todos = _apply_status_filter(todos, status_filter)
+        if deadline_filter:
+            todos = _apply_deadline_filter(todos, deadline_filter)
+        
+        if not todos:
+            filter_desc = []
+            if query:
+                filter_desc.append(f"query='{query}'")
+            if title_filter:
+                filter_desc.append(f"title='{title_filter}'")
+            if notes_filter:
+                filter_desc.append(f"notes='{notes_filter}'")
+            if type_filter:
+                filter_desc.append(f"type={type_filter}")
+            if status_filter:
+                filter_desc.append(f"status={status_filter}")
+            if deadline_filter:
+                filter_desc.append(f"deadline={deadline_filter}")
+            log_operation_end("search", True, time.time() - start_time, count=0)
+            return f"No items matching filters: {', '.join(filter_desc)}"
+        
+        total_count = len(todos)
+        
+        # Warn if large result set
+        if ctx and not limit and total_count > 20:
+            await ctx.warning(
+                f"Returning all {total_count} search results without a limit. "
+                f"Consider using limit parameter (e.g., limit=20) to reduce context window usage.",
+                extra={"total_items": total_count, "limit_used": False}
+            )
+        
+        # Apply sorting
+        todos = _apply_sort_and_limit(todos, sort_by, None)  # Don't limit yet for pagination
+        
+        # Apply pagination
+        offset_val = offset if offset is not None else 0
+        limit_val = limit if limit is not None else len(todos)
+        paginated_todos = todos[offset_val:offset_val + limit_val] if limit else todos[offset_val:]
+        
+        # Format results
+        result_lines = ["🔍 Search Results"]
+        for todo in paginated_todos:
+            status_icon = "✓" if todo.get('status') == 'completed' else "○"
+            title = todo.get('title', 'Untitled')
+            uuid = todo.get('uuid', 'unknown')
+            
+            result_lines.append(f"{status_icon} {title}")
+            result_lines.append(f"   ID: {uuid}")
+            
+            # Add snippet of notes if present
+            if todo.get('notes'):
+                notes_preview = todo['notes'][:60] + "..." if len(todo['notes']) > 60 else todo['notes']
+                result_lines.append(f"   Notes: {notes_preview}")
+        
+        # Add pagination metadata
+        showing_count = len(paginated_todos)
+        offset_val = offset if offset is not None else 0
+        limit_val = limit if limit is not None else len(todos)
+        if offset_val > 0 or (limit and total_count > offset_val + limit_val):
+            pagination_info = f"Showing items {offset_val + 1}-{offset_val + showing_count} of {total_count} total"
+        else:
+            pagination_info = f"Found {showing_count} items"
+        
+        result_lines.append(f"\n📊 {pagination_info}")
+        if sort_by:
+            result_lines.append(f"   Sorted by: {sort_by}")
+        
+        result = "\n".join(result_lines)
+        log_operation_end("search", True, time.time() - start_time, count=showing_count)
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error in search: {str(e)}")
+        log_operation_end("search", False, time.time() - start_time)
+        return _error_result(f"Error searching: {str(e)}")
+
+
+@mcp.tool(name="deadline-items", annotations=READ_ONLY_ANNOTATIONS)
+async def deadline_items(
+    filter_type: str = "overdue",
+    days: Optional[int] = 7,
+    limit: Optional[int] = None,
+    sort_by: Optional[str] = "deadline",
+    ctx: Optional[Context] = None
+) -> str:
+    """
+    Get items filtered by deadline status (v3.0.0 composite tool).
+    
+    Replaces: get-overdue-items, get-items-due-soon
+    
+    Args:
+        filter_type: Type of deadline filter - 'overdue', 'due-soon' (default: 'overdue')
+        days: For "due-soon", number of days to look ahead (default: 7)
+        limit: Maximum items to return (optional)
+        sort_by: Sort order - 'deadline', 'title', 'created', 'modified' (default: 'deadline')
+    
+    Returns:
+        Items with deadline information and urgency badges
+    
+    Examples:
+        deadline_items("overdue")
+        deadline_items("due-soon", days=3)
+        deadline_items("overdue", limit=10)
+    """
+    import time
+    from datetime import datetime, date, timedelta
+    
+    start_time = time.time()
+    log_operation_start(f"deadline-items ({filter_type})")
+    
+    # Validate filter_type
+    valid_types = ["overdue", "due-soon"]
+    if filter_type not in valid_types:
+        log_operation_end(f"deadline-items ({filter_type})", False, time.time() - start_time)
+        return f"Error: Invalid filter_type '{filter_type}'. Must be one of: {', '.join(valid_types)}"
+    
+    try:
+        # Get all incomplete todos
+        todos = [t for t in things.todos() if t.get('status') == 'incomplete']
+        
+        today = date.today()
+        filtered_todos = []
+        
+        for todo in todos:
+            deadline_str = todo.get('deadline')
+            if not deadline_str:
+                continue
+            
+            try:
+                deadline_date = datetime.fromisoformat(deadline_str).date()
+                
+                if filter_type == "overdue":
+                    if deadline_date < today:
+                        days_overdue = (today - deadline_date).days
+                        todo['days_overdue'] = days_overdue
+                        filtered_todos.append(todo)
+                
+                elif filter_type == "due-soon":
+                    days_val = days if days is not None else 7
+                    future_date = today + timedelta(days=days_val)
+                    if today <= deadline_date <= future_date:
+                        days_until = (deadline_date - today).days
+                        todo['days_until'] = days_until
+                        filtered_todos.append(todo)
+            
+            except (ValueError, TypeError):
+                continue
+        
+        if not filtered_todos:
+            log_operation_end(f"deadline-items ({filter_type})", True, time.time() - start_time, count=0)
+            if filter_type == "overdue":
+                return "✅ No overdue items found!"
+            else:
+                return f"📅 No items due in the next {days} days"
+        
+        # Sort by deadline by default
+        if sort_by == "deadline":
+            filtered_todos.sort(key=lambda x: x.get('deadline', ''))
+        else:
+            filtered_todos = _apply_sort_and_limit(filtered_todos, sort_by, None)
+        
+        # Apply limit
+        if limit:
+            filtered_todos = filtered_todos[:limit]
+        
+        # Format results
+        if filter_type == "overdue":
+            result_lines = [f"⚠️  Overdue Items ({len(filtered_todos)})"]
+            for todo in filtered_todos:
+                title = todo.get('title', 'Untitled')
+                uuid = todo.get('uuid', 'unknown')
+                days_overdue = todo.get('days_overdue', 0)
+                deadline_str = todo.get('deadline', '')
+                
+                urgency_badge = "⚠️"
+                if days_overdue > 7:
+                    urgency_badge = "🔴"
+                
+                result_lines.append(f"{urgency_badge} {title}")
+                result_lines.append(f"   ID: {uuid}")
+                result_lines.append(f"   Overdue by: {days_overdue} days (deadline: {deadline_str[:10]})")
+        
+        else:  # due-soon
+            result_lines = [f"📅 Items Due Soon (next {days} days) - {len(filtered_todos)} items"]
+            for todo in filtered_todos:
+                title = todo.get('title', 'Untitled')
+                uuid = todo.get('uuid', 'unknown')
+                days_until = todo.get('days_until', 0)
+                deadline_str = todo.get('deadline', '')
+                
+                if days_until == 0:
+                    urgency_badge = "🔴 Due today"
+                elif days_until == 1:
+                    urgency_badge = "🟠 Due tomorrow"
+                else:
+                    urgency_badge = f"🟡 Due in {days_until} days"
+                
+                result_lines.append(f"{urgency_badge}: {title}")
+                result_lines.append(f"   ID: {uuid}")
+                result_lines.append(f"   Deadline: {deadline_str[:10]}")
+        
+        result = "\n".join(result_lines)
+        log_operation_end(f"deadline-items ({filter_type})", True, time.time() - start_time, count=len(filtered_todos))
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error in deadline-items ({filter_type}): {str(e)}")
+        log_operation_end(f"deadline-items ({filter_type})", False, time.time() - start_time)
+        return _error_result(f"Error getting deadline items: {str(e)}")
+
+
+@mcp.tool(name="manage-heading", annotations=UPDATE_ANNOTATIONS)
+async def manage_heading(
+    action: str,
+    project_uuid: str,
+    heading_title: Optional[str] = None,
+    heading_uuid: Optional[str] = None,
+    todo_uuid: Optional[str] = None,
+    after_uuid: Optional[str] = None,
+    ctx: Optional[Context] = None
+) -> str:
+    """
+    Add headings or move todos under headings (v3.0.0 composite tool).
+    
+    Replaces: add-heading, move-todo-under-heading
+    
+    Args:
+        action: Action to perform - 'add', 'move'
+        project_uuid: Project UUID (required for both actions)
+        heading_title: Heading title (required for action="add")
+        heading_uuid: Heading UUID (required for action="move")
+        todo_uuid: Todo UUID (required for action="move")
+        after_uuid: Item UUID to position after (optional for action="add")
+    
+    Returns:
+        Success message with updated structure
+    
+    Examples:
+        manage_heading("add", project_uuid="...", heading_title="Phase 1")
+        manage_heading("add", project_uuid="...", heading_title="Done", after_uuid="...")
+        manage_heading("move", project_uuid="...", heading_uuid="...", todo_uuid="...")
+    """
+    import time
+    start_time = time.time()
+    log_operation_start(f"manage-heading ({action})")
+    
+    # Validate action
+    valid_actions = ["add", "move"]
+    if action not in valid_actions:
+        log_operation_end(f"manage-heading ({action})", False, time.time() - start_time)
+        return f"Error: Invalid action '{action}'. Must be one of: {', '.join(valid_actions)}"
+    
+    try:
+        if action == "add":
+            # Validate required parameters
+            if not heading_title:
+                log_operation_end(f"manage-heading ({action})", False, time.time() - start_time)
+                return "Error: 'heading_title' parameter required for action='add'"
+            
+            # Build URL scheme
+            url = f"things:///add?type=heading&heading={heading_title}&list-id={project_uuid}"
+            if after_uuid:
+                url += f"&after={after_uuid}"
+            
+            execute_url(url)
+            invalidate_caches_for(["get-project-structure", "get-projects"])
+            
+            result = f"✓ Added heading '{heading_title}' to project"
+            if after_uuid:
+                result += f" (positioned after item {after_uuid})"
+            
+            log_operation_end(f"manage-heading ({action})", True, time.time() - start_time)
+            return result
+        
+        elif action == "move":
+            # Validate required parameters
+            if not heading_uuid:
+                log_operation_end(f"manage-heading ({action})", False, time.time() - start_time)
+                return "Error: 'heading_uuid' parameter required for action='move'"
+            if not todo_uuid:
+                log_operation_end(f"manage-heading ({action})", False, time.time() - start_time)
+                return "Error: 'todo_uuid' parameter required for action='move'"
+            
+            # Verify both items exist and are in the same project
+            todo = things.get(todo_uuid)
+            heading = things.get(heading_uuid)
+            
+            if not todo:
+                log_operation_end(f"manage-heading ({action})", False, time.time() - start_time)
+                return f"Error: Todo not found: {todo_uuid}"
+            if not heading:
+                log_operation_end(f"manage-heading ({action})", False, time.time() - start_time)
+                return f"Error: Heading not found: {heading_uuid}"
+            
+            # Verify both are in the specified project
+            if isinstance(todo, dict) and isinstance(heading, dict):
+                todo_project = todo.get('project')
+                heading_project = heading.get('project')
+            else:
+                log_operation_end(f"manage-heading ({action})", False, time.time() - start_time)
+                return "Error: Invalid item type returned"
+            
+            if todo_project != project_uuid or heading_project != project_uuid:
+                log_operation_end(f"manage-heading ({action})", False, time.time() - start_time)
+                return f"Error: Both todo and heading must be in project {project_uuid}"
+            
+            # Move todo under heading
+            url = f"things:///update?id={todo_uuid}&heading={heading_uuid}"
+            execute_url(url)
+            invalidate_caches_for(["get-project-structure", "get-todos"])
+            
+            todo_title = todo.get('title', 'Untitled')
+            heading_title = heading.get('title', 'Untitled')
+            result = f"✓ Moved '{todo_title}' under heading '{heading_title}'"
+            
+            log_operation_end(f"manage-heading ({action})", True, time.time() - start_time)
+            return result
+        
+    except Exception as e:
+        logger.error(f"Error in manage-heading ({action}): {str(e)}")
+        log_operation_end(f"manage-heading ({action})", False, time.time() - start_time)
+        return _error_result(f"Error managing heading: {str(e)}")
+
+
+# ============================================================================
+# DYNAMIC TOOL MANAGEMENT CONTROL
+# ============================================================================
+
+@mcp.tool(name="enable-advanced-features", annotations=UPDATE_ANNOTATIONS)
+async def enable_advanced_features(
+    category: str,
+    ctx: Optional[Context] = None
+) -> str:
+    """
+    Enable advanced tool categories (v3.0.0 dynamic tool management).
+    
+    By default, only core tools are visible. Use this tool to enable additional features:
+    - analytics: 9 productivity analytics tools (stats, velocity, health monitoring)
+    - checklists: 4 checklist management tools
+    - structure: 2 project structure tools (headings, organization)
+    - all: Enable all advanced features
+    
+    Args:
+        category: Which category to enable - 'analytics', 'checklists', 'structure', 'all'
+    
+    Returns:
+        List of newly enabled tools with category status
+    
+    Examples:
+        enable_advanced_features("analytics")  # Enable 9 analytics tools
+        enable_advanced_features("all")  # Enable everything
+    """
+    import time
+    start_time = time.time()
+    log_operation_start(f"enable-advanced-features ({category})")
+    
+    # Validate category
+    valid_categories = ["analytics", "checklists", "structure", "all"]
+    if category not in valid_categories:
+        log_operation_end(f"enable-advanced-features ({category})", False, time.time() - start_time)
+        return f"Error: Invalid category '{category}'. Must be one of: {', '.join(valid_categories)}"
+    
+    try:
+        # Enable the category
+        enabled_count = enable_tool_category(category)
+        
+        # Build result message
+        result_lines = [f"✅ Advanced Features Enabled: {category}"]
+        result_lines.append(f"\n📊 {enabled_count} tools now available")
+        
+        if category == "all":
+            result_lines.append("\n🔬 Analytics Tools:")
+            result_lines.append("   • get-productivity-stats")
+            result_lines.append("   • get-project-velocity")
+            result_lines.append("   • get-time-to-completion")
+            result_lines.append("   • get-tag-productivity")
+            result_lines.append("   • check-stalled-projects")
+            result_lines.append("   • get-project-health-report")
+            result_lines.append("   • analyze-tag-relationships")
+            result_lines.append("   • suggest-tags")
+            result_lines.append("   • parse-natural-date")
+            
+            result_lines.append("\n☑️  Checklist Tools:")
+            result_lines.append("   • get-checklist-items")
+            result_lines.append("   • add-checklist-item")
+            result_lines.append("   • update-checklist-item")
+            result_lines.append("   • get-todos-with-checklists")
+            
+            result_lines.append("\n📐 Structure Tools:")
+            result_lines.append("   • get-project-structure")
+            result_lines.append("   • (manage-heading is always available)")
+        
+        elif category == "analytics":
+            result_lines.append("\n🔬 Analytics Tools Enabled:")
+            result_lines.append("   • get-productivity-stats - Overall completion metrics")
+            result_lines.append("   • get-project-velocity - Time-series completion tracking")
+            result_lines.append("   • get-time-to-completion - Average completion time analysis")
+            result_lines.append("   • get-tag-productivity - Tag-based productivity rankings")
+            result_lines.append("   • check-stalled-projects - Identify inactive projects")
+            result_lines.append("   • get-project-health-report - Comprehensive health scoring")
+            result_lines.append("   • analyze-tag-relationships - Co-occurrence patterns")
+            result_lines.append("   • suggest-tags - AI-powered tag recommendations")
+            result_lines.append("   • parse-natural-date - Natural language date parsing")
+        
+        elif category == "checklists":
+            result_lines.append("\n☑️  Checklist Tools Enabled:")
+            result_lines.append("   • get-checklist-items - View checklist items for a todo")
+            result_lines.append("   • add-checklist-item - Add items to checklists")
+            result_lines.append("   • update-checklist-item - Replace entire checklist")
+            result_lines.append("   • get-todos-with-checklists - Find todos with checklists")
+        
+        elif category == "structure":
+            result_lines.append("\n📐 Structure Tools Enabled:")
+            result_lines.append("   • get-project-structure - Hierarchical project visualization")
+            result_lines.append("   • (manage-heading is always available in core tools)")
+        
+        result_lines.append("\n💡 Use list-tools or tools/list to see all available tools")
+        
+        result = "\n".join(result_lines)
+        log_operation_end(f"enable-advanced-features ({category})", True, time.time() - start_time)
+        
+        if ctx:
+            await ctx.info(f"Enabled {enabled_count} {category} tools")
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error enabling {category}: {str(e)}")
+        log_operation_end(f"enable-advanced-features ({category})", False, time.time() - start_time)
+        return _error_result(f"Error enabling advanced features: {str(e)}")
+
+
+@mcp.tool(name="disable-advanced-features", annotations=UPDATE_ANNOTATIONS)
+async def disable_advanced_features(
+    category: str,
+    ctx: Optional[Context] = None
+) -> str:
+    """
+    Disable advanced tool categories (v3.0.0 dynamic tool management).
+    
+    Args:
+        category: Which category to disable - 'analytics', 'checklists', 'structure', 'all'
+    
+    Returns:
+        Confirmation message with disabled tool count
+    
+    Examples:
+        disable_advanced_features("analytics")
+        disable_advanced_features("all")
+    """
+    import time
+    start_time = time.time()
+    log_operation_start(f"disable-advanced-features ({category})")
+    
+    # Validate category
+    valid_categories = ["analytics", "checklists", "structure", "all"]
+    if category not in valid_categories:
+        log_operation_end(f"disable-advanced-features ({category})", False, time.time() - start_time)
+        return f"Error: Invalid category '{category}'. Must be one of: {', '.join(valid_categories)}"
+    
+    try:
+        # Disable the category
+        disabled_count = disable_tool_category(category)
+        
+        result = f"✓ Disabled {disabled_count} {category} tools"
+        log_operation_end(f"disable-advanced-features ({category})", True, time.time() - start_time)
+        
+        if ctx:
+            await ctx.info(f"Disabled {disabled_count} {category} tools")
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error disabling {category}: {str(e)}")
+        log_operation_end(f"disable-advanced-features ({category})", False, time.time() - start_time)
+        return _error_result(f"Error disabling advanced features: {str(e)}")
+
+
+@mcp.tool(name="get-tool-categories", annotations=READ_ONLY_ANNOTATIONS)
+async def get_tool_categories(
+    ctx: Optional[Context] = None
+) -> str:
+    """
+    Get status of all tool categories (v3.0.0 dynamic tool management).
+    
+    Shows which advanced features are enabled and how many tools in each category.
+    
+    Returns:
+        Status summary of all tool categories
+    
+    Example:
+        get_tool_categories()
+    """
+    import time
+    start_time = time.time()
+    log_operation_start("get-tool-categories")
+    
+    try:
+        status = get_category_status()
+        
+        result_lines = ["📊 Tool Categories Status"]
+        
+        for category, info in status.items():
+            status_icon = "✅" if info["enabled"] else "⏸️"
+            result_lines.append(f"\n{status_icon} {category.capitalize()}: {info['tool_count']} tools")
+            result_lines.append(f"   Status: {'ENABLED' if info['enabled'] else 'DISABLED'}")
+        
+        result_lines.append("\n💡 Use enable-advanced-features(category) to enable tools")
+        result_lines.append("   Categories: analytics, checklists, structure, all")
+        
+        result = "\n".join(result_lines)
+        log_operation_end("get-tool-categories", True, time.time() - start_time)
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error getting tool categories: {str(e)}")
+        log_operation_end("get-tool-categories", False, time.time() - start_time)
+        return _error_result(f"Error getting tool categories: {str(e)}")
+
+
+# ============================================================================
+# ORIGINAL TOOLS (Deprecated in v3.0.0 - kept for backward compatibility)
+# Use composite tools above for new code
+# ============================================================================
 
 # LIST VIEWS
 
@@ -3903,13 +4863,13 @@ def search_all_items(query: str) -> str:
             if not launch_things():
                 return _error_result("Error: Unable to launch Things app")
 
-        # Execute the search URL command
-        result = search(query=query)
+        # Execute the search URL command via things.py API
+        results = things.search(query=query)
 
-        if not result:
+        if not results:
             return _error_result(f"Error: Failed to search for '{query}'")
 
-        return f"Successfully searched for '{query}' in Things"
+        return f"Successfully searched for '{query}' in Things - found {len(results)} results"
     except Exception as e:
         logger.error(f"Error searching: {str(e)}")
         return _error_result(f"Error searching: {str(e)}")
