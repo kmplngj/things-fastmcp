@@ -27,6 +27,150 @@ This file tracks the agent's thoughts, ideas, and work flow for the `things-fast
 - Run `ruff check .` and `pytest` after modifications.
 
 ## Log
+### 2025-11-02 (Planning) - v4.0.0 MCP Features Expansion Planning Complete 📋
+- **Comprehensive v4.0.0 Planning Using FastMCP & MCP Protocol Research** ✅
+  - **User Request**: "make a plan to add Prompts Tools Resources Sampling Notifications use deepwiki for infos on mcp protocol and on what fastmcp supports create phased plan"
+  - **Research Conducted**:
+    * Used DeepWiki to query jlowin/fastmcp repository for MCP protocol capabilities
+    * **Key Finding #1**: FastMCP supports ALL requested features via decorators
+      - Prompts: `@mcp.prompt` decorator with tags for categorization
+      - Tools: `@mcp.tool` (already using extensively)
+      - Resources: `@mcp.resource("uri")` with URI templates and parameters
+      - Sampling: `ctx.sample()` for server-initiated LLM requests (requires client handler)
+      - Notifications: Automatic prompts/resources/tools list_changed when enabled/disabled
+    * **Key Finding #2**: Resource URI templates support multi-parameter patterns
+      - Syntax: `@mcp.resource("things://projects/{uuid}/todos/{todo_uuid}")`
+      - Parameters auto-extracted and passed to function arguments
+      - Wildcard support: `{param*}` matches multiple path segments
+      - MIME types: str→text/plain, dict→application/json, bytes→application/octet-stream
+    * **Key Finding #3**: Prompts vs Tools conceptual difference
+      - Prompts = Generate messages FOR LLMs (input construction, message templates)
+      - Tools = Perform actions (data manipulation, API calls, calculations)
+      - Use prompts for workflow automation and task creation guidance
+  
+  - **Documentation Created**: 3 comprehensive planning documents (1,850+ lines total)
+    * **proposal.md** (850 lines): Strategic overview with technical architecture
+      - Executive summary: Transform from tool-only → full MCP server
+      - Motivation: Address prompt fatigue, data access patterns, lack of intelligence
+      - **Prompts**: 4 categories, 12-15 prompts planned
+        * Task Creation (5): create-simple-task, create-task-with-deadline, create-recurring-task, create-task-with-checklist, brainstorm-project-tasks
+        * Project Planning (4): start-new-project, create-project-with-phases, daily-standup-review, weekly-review
+        * Review & Reflection (3): reflect-on-completed-tasks, identify-stalled-projects, review-overdue-items
+        * Workflow Automation (3): batch-schedule-tasks, organize-inbox, suggest-next-actions
+      - **Resources**: 5 categories, 20-25 resources with things:// URI scheme
+        * Hierarchical Structure (8): projects/areas/tags lists and details
+        * Todo Lists (6): inbox, today, upcoming, anytime, someday, logbook
+        * Individual Items (4): todo/project info and notes
+        * Search & Discovery (3): search, tag items, overdue
+        * Analytics (1): productivity summary
+      - **Sampling**: 5 AI-powered tools
+        * suggest-tags-ai: LLM-powered tag suggestions from task content
+        * recommend-deadline: Smart deadline estimation based on complexity
+        * parse-task-description: Natural language → structured task data
+        * analyze-project-health-ai: Deep project analysis with insights
+        * triage-inbox-ai: AI-assisted inbox organization
+      - **Notifications**: Enhanced progress reporting, automatic list_changed
+      - 6-week phased implementation plan with code examples
+    
+    * **tasks.md** (450 lines): Detailed task breakdown with time estimates
+      - **Phase 1: Prompts** (Week 1-2, 15 hours)
+        * 6 tasks: Setup, Task Creation (5 prompts), Project Planning (4), Review (3), Workflow (3), Registration
+      - **Phase 2: Resources** (Week 3-4, 19.5 hours)
+        * 7 tasks: Setup, Hierarchical (8 resources), Todo Lists (6), Individual Items (4), Search (3), Analytics (1), Registration
+      - **Phase 3: Sampling** (Week 5, 13 hours)
+        * 4 tasks: Setup, 5 Sampling Tools, Client Handler Docs, Testing
+      - **Phase 4: Notifications** (Week 6, 4 hours)
+        * 3 tasks: Verify auto-notifications, Enhanced progress reporting, Documentation
+      - **Phase 5: Integration** (Week 6, 11 hours)
+        * 4 tasks: Integration testing, Documentation, Code quality, Release prep
+      - **Total Estimate**: 62.5 hours over 6 weeks (10-12 hours/week part-time)
+      - Checkpoints after weeks 2, 4, 5, 6 with decision points
+      - Success criteria: Must Have, Should Have, Could Have
+      - Risk management: High/Medium/Low risks identified
+    
+    * **design.md** (550 lines): Technical specifications and implementation patterns
+      - Architecture overview: Current vs Enhanced structure comparison
+      - Component interaction diagram showing client/server flow
+      - **Prompts Design**: Base template pattern, 4 categories with code examples, metadata schema
+      - **Resources Design**: Complete URI namespace (`things://`), 5 implementation patterns
+        * Pattern 1: Static list resources (e.g., all projects)
+        * Pattern 2: Single-parameter templates (e.g., project/{uuid}/info)
+        * Pattern 3: Multi-parameter templates (e.g., search/{query}/todos)
+        * Pattern 4: Text resources (e.g., todo notes as text/plain)
+        * Pattern 5: Binary resources (e.g., project export as JSON bytes)
+      - **Sampling Design**: Architecture diagram, tool pattern, error handling, fallback strategy
+      - **Notifications Design**: Auto-notifications (built-in), progress reporting pattern
+      - **Data Models**: Python dataclasses for all components
+      - **API Specifications**: REST-like API documentation with request/response formats
+      - **Performance**: Caching strategy, pagination patterns, targets (50ms-5s)
+      - **Security**: Sanitization, error handling, access control
+      - **Testing Strategy**: Unit tests, integration tests, performance tests
+  
+  - **Technical Highlights**:
+    * **URI Namespace Design**: `things://projects/{uuid}/todos/{todo_uuid}`
+      - Hierarchical structure mirroring Things 3 data model
+      - 22+ resource URIs documented with examples
+    * **Prompt Categories**: Task Creation, Project Planning, Review, Workflow
+      - Uses FastMCP tags for filtering: `tags={"things3", "task_creation", "deadline"}`
+    * **Sampling Architecture**: Server-initiated LLM requests via `ctx.sample()`
+      - Requires client-side sampling_handler (user's LLM integration)
+      - Graceful fallback when handler unavailable
+    * **Performance Targets**:
+      | Feature | Target | Notes |
+      |---------|--------|-------|
+      | Prompt generation | <50ms | Template rendering |
+      | Resource read (small) | <200ms | Single project |
+      | Resource read (large) | <500ms | All projects |
+      | Sampling | 2-5s | Depends on LLM API |
+      | Notification | <10ms | Async, non-blocking |
+  
+  - **Implementation Plan** (6-week phased approach):
+    * **Week 1-2**: Phase 1 - Prompts (15 hours)
+      - Create prompts.py module
+      - Implement 15 prompt templates across 4 categories
+      - Register all prompts in fast_server.py
+      - Test in Claude Desktop
+    * **Week 3-4**: Phase 2 - Resources (19.5 hours)
+      - Create resources.py module
+      - Implement 22 resources with things:// URI scheme
+      - Support static + dynamic resources
+      - Add pagination for large result sets
+    * **Week 5**: Phase 3 - Sampling (13 hours)
+      - Create sampling.py module in tools/
+      - Implement 5 AI-powered tools using ctx.sample()
+      - Document client-side handler requirements
+      - Test with Claude/OpenAI APIs
+    * **Week 6**: Phase 4-5 - Notifications + Integration (15 hours)
+      - Verify auto-notifications working
+      - Enhanced progress reporting
+      - Integration testing all features together
+      - Documentation updates (README, CHANGELOG)
+      - Code quality checks
+      - Release v4.0.0
+  
+  - **Success Metrics**:
+    * ✅ All 12-15 prompts functional and documented
+    * ✅ All 20-25 resources functional with URI templates
+    * ✅ All 5 sampling tools functional with fallback
+    * ✅ Zero compilation errors
+    * ✅ Performance targets met for all features
+    * ✅ Comprehensive documentation and examples
+  
+  - **Risk Mitigation**:
+    * **Sampling Handler Requirement**: Document clearly, provide fallback behavior
+    * **URI Conflicts**: Use namespaced things:// scheme, avoid overlaps
+    * **Performance**: Cache resources, paginate large results, monitor with middleware
+    * **Prompt Overload**: Use tags for organization, keep count reasonable (12-15)
+  
+  - **Git Commit**: 7647dd5 "docs: Add v4.0.0 MCP features expansion planning"
+  - **Files Changed**: 3 files, 2,566 insertions (+1,850 lines of planning documentation)
+  - **Status**: Planning complete, ready for user approval and Phase 1 implementation
+  - **Next Steps**:
+    1. User review of planning documents (proposal, tasks, design)
+    2. Approval to proceed with implementation
+    3. Begin Phase 1: Prompts implementation (Week 1-2, 15 hours)
+    4. Parallel: Continue v3.0.0 manual testing in Claude Desktop
+
 ### 2025-11-02 (Implementation) - Phase 3 RE-IMPLEMENTED: Critical Bug Fix + Full Analytics Layer 🎉
 - **Fixed Context Serialization Bug + Re-implemented All 9 Analytics Tools** ✅
   - **User Report**: "Object of type Context is not JSON serializable" error in Claude Desktop
