@@ -233,6 +233,50 @@ The server exposes 31 tools organized into logical groups:
 
 Each tool includes detailed docstrings visible to AI assistants, with parameter descriptions and usage examples.
 
+## Known Limitations
+
+### Interactive Tools Require Elicitation Support
+
+⚠️ **Important for Claude Desktop Users:** Some advanced tools use FastMCP's interactive elicitation feature for step-by-step workflows. **Claude Desktop does not currently support the `elicitation/create` MCP method**, which means these tools will fail with "Method not found" errors.
+
+**Interactive Tools (Not Currently Supported in Claude Desktop):**
+
+- `add-todo-interactive` - Interactive todo creation wizard
+- `bulk-complete-todos` - Bulk completion with preview & confirmation
+- `bulk-schedule-todos` - Bulk scheduling with preview & confirmation
+- `bulk-tag-todos` - Bulk tag operations with preview & confirmation
+- `bulk-move-todos` - Bulk move operations with preview & confirmation
+- `schedule-assistant` - Smart scheduling with natural language
+- `create-project-template` - Interactive template creation
+- `apply-project-template` - Apply templates with variable substitution
+- `update-project-template` - Interactive template editing
+- `delete-project-template` - Template deletion with confirmation
+
+**Working Alternatives:**
+
+- ✅ **Use `add-todo`** instead of `add-todo-interactive` (provide all parameters directly)
+- ✅ **Use `add-project`** to create reusable project structures (you can save these as reference projects)
+- ✅ **Use `update-todo`** for individual todo modifications
+- ✅ **Use `list-project-templates`** (this works! - no elicitation needed)
+
+**Why This Happens:**
+
+FastMCP's `Context.elicit()` method enables servers to request structured input from users during tool execution. This creates a richer, conversational experience with preview-and-confirm workflows. However, elicitation is an **optional MCP extension** that not all clients implement yet.
+
+**Log Evidence:**
+```
+Server → Client: {"method":"elicitation/create", "params":{...}}
+Client → Server: {"error":{"code":-32601,"message":"Method not found"}}
+```
+
+**Future Support:**
+
+When Claude Desktop (or other MCP clients) add elicitation support, these interactive tools will work automatically without any code changes. The tools detect client capabilities at runtime and will gracefully handle both scenarios.
+
+**For MCP Client Developers:**
+
+To support these interactive tools, implement the `elicitation/create` JSON-RPC method in your MCP client. See the [FastMCP elicitation documentation](https://github.com/jlowin/fastmcp) for details on the protocol.
+
 ## Architecture
 
 ```text
