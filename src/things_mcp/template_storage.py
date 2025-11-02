@@ -25,9 +25,51 @@ logger = logging.getLogger(__name__)
 TEMPLATE_DIR = Path.home() / ".things-fastmcp" / "templates"
 TEMPLATE_DIR.mkdir(parents=True, exist_ok=True)
 
+# Template index file (tracks all template names since DiskStore doesn't support key enumeration)
+TEMPLATE_INDEX_FILE = TEMPLATE_DIR / "template_index.json"
+
 # Initialize encrypted disk storage for templates
 # DiskStore provides persistent, file-based storage
 template_store: AsyncKeyValue = DiskStore(directory=str(TEMPLATE_DIR))
+
+
+def _load_template_index() -> List[str]:
+    """Load the template index from disk."""
+    if TEMPLATE_INDEX_FILE.exists():
+        import json
+        try:
+            with open(TEMPLATE_INDEX_FILE, 'r') as f:
+                return json.load(f)
+        except Exception as e:
+            logger.warning(f"Failed to load template index: {e}")
+            return []
+    return []
+
+
+def _save_template_index(template_names: List[str]) -> None:
+    """Save the template index to disk."""
+    import json
+    try:
+        with open(TEMPLATE_INDEX_FILE, 'w') as f:
+            json.dump(sorted(set(template_names)), f, indent=2)
+    except Exception as e:
+        logger.error(f"Failed to save template index: {e}")
+
+
+def _add_to_index(template_name: str) -> None:
+    """Add a template name to the index."""
+    index = _load_template_index()
+    if template_name not in index:
+        index.append(template_name)
+        _save_template_index(index)
+
+
+def _remove_from_index(template_name: str) -> None:
+    """Remove a template name from the index."""
+    index = _load_template_index()
+    if template_name in index:
+        index.remove(template_name)
+        _save_template_index(index)
 
 
 def validate_template_name(name: str) -> bool:
@@ -82,6 +124,8 @@ async def save_template(template_name: str, template_data: Dict[str, Any]) -> No
             value=template_data,
             collection="templates"
         )
+        # Add to index for enumeration
+        _add_to_index(template_name)
     except Exception as e:
         logger.error(f"Failed to save template '{template_name}': {e}")
         raise OSError(f"Failed to save template: {e}") from e
@@ -126,40 +170,22 @@ async def list_templates() -> List[Dict[str, Any]]:
     templates = []
     
     try:
-        # Check if store supports enumeration
-        if not hasattr(template_store, 'enumerate_keys'):
-            # Fallback: scan directory for .json files (DiskStore uses JSON files)
-            for template_file in TEMPLATE_DIR.glob("*.json"):
-                template_name = template_file.stem
-                
-                try:
-                    template_data = await get_template(template_name)
-                    if template_data:
-                        templates.append({
-                            "name": template_name,
-                            "title": template_data.get("title", "Untitled"),
-                            "created": template_data.get("created", "Unknown"),
-                            "todo_count": len(template_data.get("todos", []))
-                        })
-                except Exception as e:
-                    logger.warning(f"Skipping corrupted template '{template_name}': {e}")
-                    continue
-        else:
-            # Use enumerate_keys if available
-            keys = await template_store.enumerate_keys(collection="templates")
-            for template_name in keys:
-                try:
-                    template_data = await get_template(template_name)
-                    if template_data:
-                        templates.append({
-                            "name": template_name,
-                            "title": template_data.get("title", "Untitled"),
-                            "created": template_data.get("created", "Unknown"),
-                            "todo_count": len(template_data.get("todos", []))
-                        })
-                except Exception as e:
-                    logger.warning(f"Skipping corrupted template '{template_name}': {e}")
-                    continue
+        # Load template names from index (since DiskStore doesn't support key enumeration)
+        template_names = _load_template_index()
+        
+        for template_name in template_names:
+            try:
+                template_data = await get_template(template_name)
+                if template_data:
+                    templates.append({
+                        "name": template_name,
+                        "title": template_data.get("title", "Untitled"),
+                        "created": template_data.get("created", "Unknown"),
+                        "todo_count": len(template_data.get("todos", []))
+                    })
+            except Exception as e:
+                logger.warning(f"Skipping corrupted template '{template_name}': {e}")
+                continue
         
         return sorted(templates, key=lambda x: x["name"])
     
@@ -190,6 +216,7 @@ async def delete_template(template_name: str) -> bool:
     try:
         deleted = await template_store.delete(key=template_name, collection="templates")
         if deleted:
+            _remove_from_index(template_name)  # Remove from index after successful deletion
             logger.info(f"Deleted template '{template_name}'")
         return deleted
     except Exception as e:
