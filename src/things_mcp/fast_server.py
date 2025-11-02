@@ -60,6 +60,9 @@ from .analytics import (
     TagSuggestion,  # type: ignore # noqa: F401
 )
 
+# Import prompts module
+from . import prompts
+
 # Load environment variables from .env file
 load_dotenv()
 
@@ -471,6 +474,14 @@ mcp.add_middleware(ErrorHandlingMiddleware(
     transform_errors=True,   # Transform errors to consistent format
 ))
 logger.info("FastMCP middleware configured successfully")
+
+# ============================================================================
+# REGISTER PROMPTS (v4.0.0 Phase 1)
+# ============================================================================
+
+logger.info("Registering MCP prompts...")
+prompts.register_all_prompts(mcp)
+logger.info(f"Registered {len(prompts.PROMPT_REGISTRY)} prompts across 4 categories")
 
 # ============================================================================
 # DYNAMIC TOOL MANAGEMENT (v3.0.0 Phase 2)
