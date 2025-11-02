@@ -8,7 +8,8 @@ license = { text = "MIT License" }
 authors = [
     { name = "Yaroslav Krempovych", email = "51231325+excelsior@users.noreply.github.com" },
     { name = "Harald Lindstrøm", email = "hald@users.noreply.github.com" },
-]
+    { name = "Jan Kampling", email = "kmplngj@users.noreply.github.com" }
+    ]
 keywords = [
     "mcp",
     "anthropic",
@@ -39,12 +40,13 @@ dependencies = [
     "things-py>=0.0.15",
     "rich>=13.7.0",
     "dateparser>=1.2.0",
+    "py-key-value-aio[disk]>=0.2.8",
 ]
 
 [project.urls]
-"Homepage" = "https://github.com/CaseyRo/things-fastmcp"
-"Bug Tracker" = "https://github.com/CaseyRo/things-fastmcp/issues"
-"Documentation" = "https://github.com/CaseyRo/things-fastmcp#readme"
+"Homepage" = "https://github.com/kmplngj/things-fastmcp"
+"Bug Tracker" = "https://github.com/kmplngj/things-fastmcp/issues"
+"Documentation" = "https://github.com/kmplngj/things-fastmcp#readme"
 
 [build-system]
 requires = ["hatchling"]
