@@ -4,6 +4,7 @@ Things MCP Server implementation using the FastMCP pattern.
 This provides a more modern and maintainable approach to the Things integration.
 """
 import os
+import time
 from functools import lru_cache
 from typing import Dict, Any, Optional, List, Union
 import inspect
@@ -36,6 +37,27 @@ from .template_storage import (
     list_templates_sync as list_templates,
     delete_template_sync as delete_template,
     template_exists_sync as template_exists
+)
+
+# Import analytics functions and dataclasses
+from .analytics import (
+    calculate_productivity_stats,
+    calculate_project_velocity,
+    calculate_time_to_completion,
+    calculate_tag_productivity,
+    calculate_stalled_projects,
+    calculate_project_health,
+    calculate_tag_relationships,
+    calculate_tag_suggestions,
+    generate_ascii_chart,
+    ProductivityStats,  # type: ignore # noqa: F401
+    ProjectVelocity,  # type: ignore # noqa: F401
+    CompletionTimeStats,  # type: ignore # noqa: F401
+    TagProductivityMetric,  # type: ignore # noqa: F401
+    StalledProject,  # type: ignore # noqa: F401
+    ProjectHealth,  # type: ignore # noqa: F401
+    TagRelationship,  # type: ignore # noqa: F401
+    TagSuggestion,  # type: ignore # noqa: F401
 )
 
 # Load environment variables from .env file
@@ -117,6 +139,16 @@ TOOL_ANNOTATIONS: Dict[str, types.ToolAnnotations] = {
     "search-items": READ_ONLY_ANNOTATIONS,
     "get-recent": READ_ONLY_ANNOTATIONS,
     "get-cache-stats": READ_ONLY_ANNOTATIONS,
+    # Phase 3: Analytics & Intelligence Layer
+    "get-productivity-stats": READ_ONLY_ANNOTATIONS,
+    "get-project-velocity": READ_ONLY_ANNOTATIONS,
+    "get-time-to-completion": READ_ONLY_ANNOTATIONS,
+    "get-tag-productivity": READ_ONLY_ANNOTATIONS,
+    "check-stalled-projects": READ_ONLY_ANNOTATIONS,
+    "get-project-health-report": READ_ONLY_ANNOTATIONS,
+    "analyze-tag-relationships": READ_ONLY_ANNOTATIONS,
+    "suggest-tags": READ_ONLY_ANNOTATIONS,
+    "parse-natural-date": READ_ONLY_ANNOTATIONS,
 }
 
 # Configure enhanced logging
@@ -4633,6 +4665,719 @@ async def delete_project_template(ctx: Context) -> str:
     except Exception as e:
         logger.error(f"Error deleting project template: {str(e)}")
         return _error_result(f"Error deleting template: {str(e)}")
+
+
+# ============================================================================
+# ANALYTICS & INTELLIGENCE LAYER (Phase 3)
+# ============================================================================
+
+@mcp.tool(name="get-productivity-stats", annotations=TOOL_ANNOTATIONS["get-productivity-stats"])
+@cached(ttl=300)  # 5 minute cache
+async def get_productivity_stats(days: int = 30) -> str:
+    """
+    Get productivity statistics for the specified time period.
+    
+    Analyzes completion rates, trends, and top productive tags across
+    all tasks to provide insights into your productivity patterns.
+    
+    Args:
+        days: Number of days to analyze (default: 30)
+        
+    Returns:
+        Formatted statistics with emoji indicators
+        
+    Examples:
+        get_productivity_stats(30)  # Last 30 days
+        get_productivity_stats(7)   # Last week
+        get_productivity_stats(90)  # Last quarter
+    """
+    start_time = time.time()
+    log_operation_start("get-productivity-stats")
+    
+    try:
+        # Fetch data
+        logbook = things.logbook()
+        incomplete = things.todos()
+        
+        # Calculate stats
+        stats = calculate_productivity_stats(
+            days=days,
+            logbook_items=logbook,
+            incomplete_items=incomplete
+        )
+        
+        # Format output
+        result = f"""📊 Productivity Stats (Last {days} days)
+
+✅ Completed: {stats.completed_count} tasks
+📝 Incomplete: {stats.incomplete_count} tasks
+📈 Completion Rate: {stats.completion_rate * 100:.1f}%
+⏱️  Avg Time to Complete: {stats.avg_completion_hours / 24:.1f} days
+⚠️  Overdue: {stats.overdue_count} tasks
+
+📊 Trend: {stats.trend.capitalize()} {
+    '📈' if stats.trend == 'improving' else '📉' if stats.trend == 'declining' else '➡️'
+}
+
+🏆 Most Productive Tags:"""
+        
+        if stats.top_productive_tags:
+            for i, (tag, count) in enumerate(stats.top_productive_tags, 1):
+                result += f"\n   {i}. {tag}: {count} tasks"
+        else:
+            result += "\n   (No tagged tasks)"
+        
+        # Add structured data for LLM parsing
+        from dataclasses import asdict
+        result += f"\n\n_Structured data: {asdict(stats)}_"
+        
+        log_operation_end("get-productivity-stats", True, time.time() - start_time)
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error calculating productivity stats: {e}")
+        return _error_result(f"Error calculating productivity stats: {str(e)}")
+
+
+@mcp.tool(name="get-project-velocity", annotations=TOOL_ANNOTATIONS["get-project-velocity"])
+async def get_project_velocity(
+    project_uuid: str,
+    interval: str = "weekly",
+    periods: int = 4
+) -> str:
+    """
+    Analyze project velocity (task completion rate over time).
+    
+    Tracks how quickly tasks are being completed in a project over
+    multiple time periods to identify productivity trends.
+    
+    Args:
+        project_uuid: Project UUID
+        interval: Time interval - "daily", "weekly", or "monthly" (default: "weekly")
+        periods: Number of periods to analyze (default: 4)
+        
+    Returns:
+        Velocity chart with ASCII visualization and trend analysis
+        
+    Examples:
+        get_project_velocity("PROJECT-UUID", "weekly", 4)  # Last 4 weeks
+        get_project_velocity("PROJECT-UUID", "daily", 7)   # Last 7 days
+        get_project_velocity("PROJECT-UUID", "monthly", 3) # Last 3 months
+    """
+    start_time = time.time()
+    log_operation_start("get-project-velocity")
+    
+    try:
+        # Get project with items
+        project = things.get(project_uuid)
+        if not project or not isinstance(project, dict):
+            return _error_result(f"Project not found: {project_uuid}")
+        
+        # Get full items
+        project_with_items = things.projects(uuid=project_uuid, include_items=True)
+        if not project_with_items:
+            return _error_result(f"Could not retrieve project items: {project_uuid}")
+        
+        # Calculate velocity
+        velocity = calculate_project_velocity(
+            project=project_with_items,  # type: ignore
+            interval=interval,
+            periods=periods
+        )
+        
+        # Format output with ASCII chart
+        result = f"""📈 Project Velocity: {velocity.project_title}
+
+"""
+        
+        # Generate ASCII chart
+        period_labels = []
+        period_values = []
+        for i, period in enumerate(velocity.periods, 1):
+            label = f"{interval.capitalize()} {i}"
+            period_labels.append(label)
+            period_values.append(period.completed_count)
+        
+        chart = generate_ascii_chart(period_values, period_labels, max_width=40)
+        result += chart + "\n\n"
+        
+        # Add statistics
+        trend_emoji = "🚀" if velocity.trend == "accelerating" else "📉" if velocity.trend == "decelerating" else "➡️"
+        result += f"Avg: {velocity.avg_velocity:.1f} tasks/{interval}\n"
+        result += f"Trend: {velocity.trend.capitalize()} {trend_emoji}"
+        
+        # Add structured data
+        from dataclasses import asdict
+        result += f"\n\n_Structured data: {asdict(velocity)}_"
+        
+        log_operation_end("get-project-velocity", True, time.time() - start_time)
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error calculating project velocity: {e}")
+        return _error_result(f"Error calculating project velocity: {str(e)}")
+
+
+@mcp.tool(name="get-time-to-completion", annotations=TOOL_ANNOTATIONS["get-time-to-completion"])
+@cached(ttl=600)  # 10 minute cache
+async def get_time_to_completion(
+    group_by: str = "overall",
+    limit: int = 100
+) -> str:
+    """
+    Calculate average time to completion for tasks.
+    
+    Analyzes how long tasks take from creation to completion,
+    grouped by different dimensions for comparison.
+    
+    Args:
+        group_by: How to group results - "overall", "tag", "project", or "area" (default: "overall")
+        limit: Max number of completed tasks to analyze (default: 100)
+        
+    Returns:
+        Time-to-completion statistics with speed indicators
+        
+    Examples:
+        get_time_to_completion("overall", 100)  # Overall average
+        get_time_to_completion("tag", 200)      # Compare tags
+        get_time_to_completion("project", 50)   # Compare projects
+    """
+    start_time = time.time()
+    log_operation_start("get-time-to-completion")
+    
+    try:
+        # Get completed items
+        logbook = things.logbook()
+        
+        # Calculate statistics
+        stats_list = calculate_time_to_completion(
+            completed_items=logbook,
+            group_by=group_by,
+            limit=limit
+        )
+        
+        if not stats_list:
+            return "No completion data available for analysis"
+        
+        # Format output
+        result = f"""⏱️  Average Time to Completion (Last {limit} tasks)
+
+"""
+        
+        if group_by == "overall":
+            stats = stats_list[0]
+            result += f"""Overall: {stats.avg_hours / 24:.1f} days (median: {stats.median_hours / 24:.1f} days)
+   {stats.count} tasks analyzed
+   Min: {stats.min_hours / 24:.1f} days, Max: {stats.max_hours / 24:.1f} days, P90: {stats.p90_hours / 24:.1f} days"""
+        else:
+            result += f"By {group_by.capitalize()}:\n"
+            for i, stats in enumerate(stats_list[:10], 1):  # Top 10
+                avg_days = stats.avg_hours / 24
+                median_days = stats.median_hours / 24
+                speed_indicator = "⚡" if avg_days < 1 else "🐢" if avg_days > 7 else ""
+                
+                result += f"   {i}. {stats.group_name}: {avg_days:.1f} days (median: {median_days:.1f}) {speed_indicator}\n"
+                result += f"      {stats.count} tasks analyzed\n"
+            
+            # Add insight
+            if len(stats_list) >= 2:
+                fastest = stats_list[0]
+                slowest = stats_list[-1]
+                ratio = (slowest.avg_hours / fastest.avg_hours) if fastest.avg_hours > 0 else 0
+                result += f"\n💡 Insight: '{fastest.group_name}' is {ratio:.1f}x faster than '{slowest.group_name}'!"
+        
+        log_operation_end("get-time-to-completion", True, time.time() - start_time)
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error calculating time to completion: {e}")
+        return _error_result(f"Error calculating time to completion: {str(e)}")
+
+
+@mcp.tool(name="get-tag-productivity", annotations=TOOL_ANNOTATIONS["get-tag-productivity"])
+@cached(ttl=600)  # 10 minute cache
+async def get_tag_productivity(min_tasks: int = 3) -> str:
+    """
+    Analyze productivity metrics by tag.
+    
+    Compares completion rates and average time to completion across
+    different tags to identify your most productive work categories.
+    
+    Args:
+        min_tasks: Minimum tasks required for tag to be included (default: 3)
+        
+    Returns:
+        Tag productivity rankings with visual indicators
+        
+    Examples:
+        get_tag_productivity(3)   # Tags with 3+ tasks
+        get_tag_productivity(10)  # Tags with 10+ tasks (more reliable)
+    """
+    start_time = time.time()
+    log_operation_start("get-tag-productivity")
+    
+    try:
+        # Get all items
+        logbook = things.logbook()
+        incomplete = things.todos()
+        all_items = logbook + incomplete
+        
+        # Calculate productivity
+        metrics = calculate_tag_productivity(
+            all_items=all_items,
+            min_tasks=min_tasks
+        )
+        
+        if not metrics:
+            return f"No tags found with at least {min_tasks} tasks"
+        
+        # Format output
+        result = f"""🏷️  Tag Productivity Analysis (min {min_tasks} tasks)
+
+"""
+        
+        for i, metric in enumerate(metrics[:20], 1):  # Top 20
+            rate = metric.completion_rate * 100
+            
+            # Productivity indicator
+            if rate >= 80:
+                indicator = "🏆"
+            elif rate >= 50:
+                indicator = "✓"
+            elif rate < 25:
+                indicator = "⚠️"
+            else:
+                indicator = ""
+            
+            result += f"   {i}. {metric.tag_name} {indicator}\n"
+            result += f"      Completion: {rate:.1f}% ({metric.completed_tasks}/{metric.total_tasks} tasks)\n"
+            
+            if metric.avg_completion_hours > 0:
+                avg_days = metric.avg_completion_hours / 24
+                speed = "⚡" if avg_days < 1 else "🐢" if avg_days > 7 else ""
+                result += f"      Avg time: {avg_days:.1f} days {speed}\n"
+        
+        # Add insights
+        if metrics:
+            top = metrics[0]
+            result += f"\n💡 Top Performer: '{top.tag_name}' with {top.completion_rate * 100:.1f}% completion rate"
+            
+            low_completion = [m for m in metrics if m.completion_rate < 0.25]
+            if low_completion:
+                low_tags = ", ".join([m.tag_name for m in low_completion[:3]])
+                result += f"\n⚠️  Tags needing attention: {low_tags}"
+        
+        log_operation_end("get-tag-productivity", True, time.time() - start_time)
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error calculating tag productivity: {e}")
+        return _error_result(f"Error calculating tag productivity: {str(e)}")
+
+
+@mcp.tool(name="check-stalled-projects", annotations=TOOL_ANNOTATIONS["check-stalled-projects"])
+async def check_stalled_projects(min_inactive_days: int = 14) -> str:
+    """
+    Find projects with no recent activity (stalled).
+    
+    Identifies projects that haven't had any task completions or
+    modifications in the specified time period.
+    
+    Args:
+        min_inactive_days: Days without activity to be considered stalled (default: 14)
+        
+    Returns:
+        List of stalled projects with last activity date and recommendations
+        
+    Examples:
+        check_stalled_projects(14)  # 2+ weeks inactive
+        check_stalled_projects(30)  # 1+ month inactive
+        check_stalled_projects(7)   # 1+ week inactive
+    """
+    start_time = time.time()
+    log_operation_start("check-stalled-projects")
+    
+    try:
+        # Get all projects with items
+        projects = things.projects(include_items=True)
+        
+        # Calculate stalled projects
+        stalled = calculate_stalled_projects(
+            projects=projects,
+            min_inactive_days=min_inactive_days
+        )
+        
+        if not stalled:
+            return f"✓ No stalled projects found (inactive >{min_inactive_days} days)"
+        
+        # Format output
+        result = f"""⚠️  Stalled Projects (No activity in {min_inactive_days}+ days)
+
+"""
+        
+        for i, project in enumerate(stalled, 1):
+            # Urgency indicator
+            if project.days_inactive > 60:
+                urgency = "⚠️ Very stalled"
+            elif project.days_inactive > 30:
+                urgency = "⏸️  Moderately stalled"
+            else:
+                urgency = ""
+            
+            result += f"{i}. {project.title} {urgency}\n"
+            result += f"   Last activity: {project.last_activity_date} ({project.days_inactive} days ago)\n"
+            result += f"   Status: {project.incomplete_count} incomplete task(s)\n"
+            
+            if project.notes:
+                notes_preview = project.notes[:100] + "..." if len(project.notes) > 100 else project.notes
+                result += f"   Notes: {notes_preview}\n"
+            
+            result += "\n"
+        
+        # Summary
+        total_incomplete = sum(p.incomplete_count for p in stalled)
+        result += f"Found {len(stalled)} stalled project(s) with {total_incomplete} incomplete task(s) total.\n"
+        result += "💡 Consider reviewing these projects - archive, complete, or re-energize them."
+        
+        log_operation_end("check-stalled-projects", True, time.time() - start_time)
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error checking stalled projects: {e}")
+        return _error_result(f"Error checking stalled projects: {str(e)}")
+
+
+@mcp.tool(name="get-project-health-report", annotations=TOOL_ANNOTATIONS["get-project-health-report"])
+async def get_project_health_report() -> str:
+    """
+    Generate comprehensive health report for all active projects.
+    
+    Analyzes completion rates, velocity, inactivity, overdue tasks,
+    and scope creep to generate 0-100 health scores with actionable
+    recommendations for each project.
+    
+    Returns:
+        Detailed health reports sorted by health score (worst first)
+        
+    Example:
+        get_project_health_report()  # Analyze all active projects
+    """
+    start_time = time.time()
+    log_operation_start("get-project-health-report")
+    
+    try:
+        # Get all projects with items
+        projects = things.projects(include_items=True)
+        
+        # Calculate health for all projects
+        health_reports = calculate_project_health(projects=projects)
+        
+        if not health_reports:
+            return "No active projects to analyze"
+        
+        # Format output
+        result = """🏥 Project Health Report
+
+"""
+        
+        for i, health in enumerate(health_reports[:10], 1):  # Top 10 worst
+            # Health indicator
+            if health.health_score < 50:
+                indicator = "🔴 Critical"
+            elif health.health_score < 75:
+                indicator = "🟡 Needs Attention"
+            else:
+                indicator = "🟢 Healthy"
+            
+            result += f"{i}. {health.project_title}\n"
+            result += f"   Overall Health: {health.health_score}/100 {indicator}\n\n"
+            
+            result += "   📊 Metrics:\n"
+            result += f"      ✅ Completion: {health.completion_rate * 100:.0f}%\n"
+            result += f"      📈 Velocity: {health.velocity:.1f} tasks/week\n"
+            result += f"      ⏱️  Last Activity: {health.days_inactive} days ago\n"
+            
+            if health.overdue_count > 0:
+                result += f"      ⚠️  Overdue: {health.overdue_count} task(s)\n"
+            
+            result += f"      📊 Scope Creep: {health.scope_creep_ratio:.2f}x\n"
+            
+            if health.estimated_completion_date:
+                result += f"      🎯 Est. Completion: {health.estimated_completion_date}\n"
+            
+            if health.recommendations:
+                result += "\n   💡 Recommendations:\n"
+                for rec in health.recommendations[:3]:  # Top 3
+                    result += f"      - {rec}\n"
+            
+            result += "\n"
+        
+        # Overall statistics
+        avg_health = sum(h.health_score for h in health_reports) / len(health_reports)
+        total_overdue = sum(h.overdue_count for h in health_reports)
+        
+        result += "📊 Overall Statistics:\n"
+        result += f"   Average Health: {avg_health:.0f}/100\n"
+        result += f"   Total Overdue Tasks: {total_overdue}\n"
+        result += f"   Projects Analyzed: {len(health_reports)}"
+        
+        log_operation_end("get-project-health-report", True, time.time() - start_time)
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error generating project health report: {e}")
+        return _error_result(f"Error generating project health report: {str(e)}")
+
+
+@mcp.tool(name="analyze-tag-relationships", annotations=TOOL_ANNOTATIONS["analyze-tag-relationships"])
+@cached(ttl=600)  # 10 minute cache
+async def analyze_tag_relationships(
+    min_cooccurrence: int = 3,
+    limit: int = 20
+) -> str:
+    """
+    Analyze which tags frequently appear together.
+    
+    Discovers implicit connections between work categories by analyzing
+    how often different tags appear on the same tasks.
+    
+    Args:
+        min_cooccurrence: Minimum times tags must appear together (default: 3)
+        limit: Max number of relationships to return (default: 20, max: 50)
+        
+    Returns:
+        Tag co-occurrence patterns with strength indicators
+        
+    Examples:
+        analyze_tag_relationships(3, 20)   # Standard analysis
+        analyze_tag_relationships(5, 10)   # High confidence, fewer results
+    """
+    start_time = time.time()
+    log_operation_start("analyze-tag-relationships")
+    
+    try:
+        # Limit to max 50
+        limit = min(limit, 50)
+        
+        # Get all items
+        logbook = things.logbook()
+        incomplete = things.todos()
+        
+        # Calculate relationships
+        relationships = calculate_tag_relationships(
+            logbook_items=logbook,
+            incomplete_items=incomplete,
+            min_cooccurrence=min_cooccurrence
+        )
+        
+        if not relationships:
+            return f"No tag relationships found (min {min_cooccurrence} co-occurrences)"
+        
+        # Format output
+        result = f"""🏷️  Tag Relationship Analysis (min {min_cooccurrence} co-occurrences)
+
+"""
+        
+        for i, rel in enumerate(relationships[:limit], 1):
+            # Strength indicator
+            if rel.strength >= 0.7:
+                strength_indicator = "🔴"
+            elif rel.strength >= 0.4:
+                strength_indicator = "🟠"
+            else:
+                strength_indicator = "🟡"
+            
+            result += f"   {i}. {rel.tag1} + {rel.tag2} {strength_indicator}\n"
+            result += f"      Co-occurrence: {rel.co_occurrence_count} times\n"
+            result += f"      Strength: {rel.strength:.2f} ({rel.tag1}: {rel.tag1_total}, {rel.tag2}: {rel.tag2_total})\n\n"
+        
+        # Add insights
+        if relationships:
+            strongest = max(relationships, key=lambda r: r.strength)
+            most_common = max(relationships, key=lambda r: r.co_occurrence_count)
+            
+            result += f"💡 Strongest relationship: '{strongest.tag1}' + '{strongest.tag2}' ({strongest.strength:.2f})\n"
+            result += f"📊 Most common: '{most_common.tag1}' + '{most_common.tag2}' ({most_common.co_occurrence_count} times)"
+        
+        log_operation_end("analyze-tag-relationships", True, time.time() - start_time)
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error analyzing tag relationships: {e}")
+        return _error_result(f"Error analyzing tag relationships: {str(e)}")
+
+
+@mcp.tool(name="suggest-tags", annotations=TOOL_ANNOTATIONS["suggest-tags"])
+@cached(ttl=300)  # 5 minute cache
+async def suggest_tags(
+    title: str,
+    notes: str = "",
+    max_suggestions: int = 10
+) -> str:
+    """
+    Suggest relevant tags based on task content.
+    
+    Uses keyword extraction and historical tag relationships to recommend
+    tags that might be relevant for a new task.
+    
+    Args:
+        title: Task title
+        notes: Task notes (optional)
+        max_suggestions: Maximum suggestions to return (default: 10)
+        
+    Returns:
+        Suggested tags with confidence scores and examples
+        
+    Examples:
+        suggest_tags("Buy groceries", "milk, eggs, bread")
+        suggest_tags("Schedule dentist appointment")
+        suggest_tags("Review Q4 budget proposal", "annual planning meeting")
+    """
+    start_time = time.time()
+    log_operation_start("suggest-tags")
+    
+    try:
+        # Get all items
+        logbook = things.logbook()
+        incomplete = things.todos()
+        
+        # Calculate suggestions
+        suggestions = calculate_tag_suggestions(
+            item_title=title,
+            item_notes=notes,
+            existing_tags=[],  # No existing tags for new item
+            logbook_items=logbook,
+            incomplete_items=incomplete,
+            max_suggestions=max_suggestions
+        )
+        
+        if not suggestions:
+            return f"No tag suggestions available for: '{title}'"
+        
+        # Format output
+        result = f"""🏷️  Tag Suggestions for: "{title}"
+
+"""
+        
+        for i, suggestion in enumerate(suggestions, 1):
+            confidence_pct = suggestion.confidence * 100
+            
+            # Confidence indicator
+            if confidence_pct >= 80:
+                indicator = "⭐⭐⭐"
+            elif confidence_pct >= 50:
+                indicator = "⭐⭐"
+            else:
+                indicator = "⭐"
+            
+            result += f"   {i}. {suggestion.tag_name} ({confidence_pct:.0f}% confidence) {indicator}\n"
+            
+            if suggestion.matching_keywords:
+                result += f"      Matches: {', '.join(suggestion.matching_keywords)}\n"
+            
+            if suggestion.example_tasks:
+                examples = ", ".join([f'"{t}"' for t in suggestion.example_tasks[:3]])
+                result += f"      Similar: {examples}\n"
+            
+            result += "\n"
+        
+        # Add recommendation
+        if suggestions:
+            top_tags = [s.tag_name for s in suggestions[:3] if s.confidence > 0.5]
+            if top_tags:
+                result += f"💡 Recommendation: Consider adding {', '.join(top_tags)}"
+        
+        log_operation_end("suggest-tags", True, time.time() - start_time)
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error suggesting tags: {e}")
+        return _error_result(f"Error suggesting tags: {str(e)}")
+
+
+@mcp.tool(name="parse-natural-date", annotations=TOOL_ANNOTATIONS["parse-natural-date"])
+async def parse_natural_date(date_input: str) -> str:
+    """
+    Parse natural language date expressions to ISO format.
+    
+    Converts human-friendly date expressions like "tomorrow" or "next Monday"
+    into ISO dates (YYYY-MM-DD) compatible with Things URL scheme.
+    
+    Args:
+        date_input: Natural language date (e.g., "next Monday", "in 3 days", "Dec 25")
+        
+    Returns:
+        ISO formatted date (YYYY-MM-DD) with interpretation
+        
+    Examples:
+        parse_natural_date("tomorrow")           # → 2025-11-03
+        parse_natural_date("next Monday")        # → 2025-11-09
+        parse_natural_date("in 3 days")          # → 2025-11-05
+        parse_natural_date("Dec 25")             # → 2025-12-25
+        parse_natural_date("2 weeks from now")   # → 2025-11-16
+    """
+    start_time = time.time()
+    log_operation_start("parse-natural-date")
+    
+    try:
+        import dateparser
+        from datetime import datetime, date
+        
+        # Configure dateparser to prefer future dates
+        settings = {
+            'PREFER_DATES_FROM': 'future',
+            'RETURN_AS_TIMEZONE_AWARE': False,
+            'RELATIVE_BASE': datetime.now()
+        }
+        
+        # Try parsing
+        parsed = dateparser.parse(date_input, settings=settings)  # type: ignore
+        
+        if not parsed:
+            # Check if it's a Things-specific keyword
+            if date_input.lower() in ['anytime', 'someday']:
+                return f"Special keyword: {date_input}\n(Use directly in Things URL scheme)"
+            
+            return _error_result(
+                f"Could not parse date: '{date_input}'\n"
+                "Try formats like: 'tomorrow', 'next Monday', 'in 3 days', 'Dec 25', 'YYYY-MM-DD'"
+            )
+        
+        # Convert to ISO date
+        parsed_date = parsed.date()
+        iso_date = parsed_date.isoformat()
+        
+        # Build interpretation
+        today = date.today()
+        days_diff = (parsed_date - today).days
+        
+        if days_diff < 0:
+            warning = f"⚠️  Warning: This date is in the past ({abs(days_diff)} days ago)"
+        else:
+            warning = ""
+        
+        # Format result
+        result = f"""Input: "{date_input}"
+Parsed: {iso_date}
+Interpretation: {parsed.strftime('%A, %B %d, %Y')} ({days_diff} days from today)
+{warning}
+
+Usage examples:
+  things:///add?title=Task&when={iso_date}
+  things:///update?id=UUID&deadline={iso_date}"""
+        
+        log_operation_end("parse-natural-date", True, time.time() - start_time)
+        return result
+        
+    except ImportError:
+        return _error_result(
+            "dateparser library not installed.\n"
+            "Install with: pip install dateparser"
+        )
+    except Exception as e:
+        logger.error(f"Error parsing natural date: {e}")
+        return _error_result(f"Error parsing date: {str(e)}")
+
 
 @mcp.tool(name="get-cache-stats", annotations=TOOL_ANNOTATIONS["get-cache-stats"])
 def get_cache_statistics() -> str:
