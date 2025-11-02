@@ -27,6 +27,44 @@ This file tracks the agent's thoughts, ideas, and work flow for the `things-fast
 - Run `ruff check .` and `pytest` after modifications.
 
 ## Log
+### 2025-11-02 (Bug Fix) - FastMCP Resource Registration Fixed
+- **Fixed "URI template must contain at least one parameter" Error** ✅
+  - **User Report**: MCP server failing to start in Claude Desktop with FastMCP resource validation error
+  - **Root Cause**: FastMCP distinguishes between static resources and resource templates:
+    * **Static Resources**: URI has NO parameters → function must have NO parameters (except optional Context)
+    * **Resource Templates**: URI has {param} → function MUST have matching parameter
+    * **Query Parameters NOT Supported**: FastMCP doesn't support ?key=value in resource URIs
+  
+  - **Problem Resources Identified**:
+    1. `logbook_resource(limit: int, offset: int, ctx)` → had parameters but URI "things://todos/logbook" was static
+    2. `due_soon_resource(days: int, ctx)` → had parameter but URI "things://deadlines/due-soon" was static
+    3. `productivity_summary_resource(days: int, ctx)` → had parameter but URI "things://analytics/summary" was static
+  
+  - **Solution Applied**:
+    * Removed all non-Context parameters from these 3 functions
+    * Fixed to default values (logbook: 100 items, due_soon: 7 days, productivity: 30 days)
+    * Updated docstrings and RESOURCE_REGISTRY descriptions
+    * All resource functions now have correct signatures for FastMCP
+  
+  - **Technical Details**:
+    * FastMCP uses `ResourceTemplate.from_function()` which validates URI/function parameter consistency
+    * Query parameters would require different approach (possibly separate tools for configurable versions)
+    * Static resources are the appropriate pattern for list/summary endpoints
+  
+  - **Research Method**: Used DeepWiki to query jlowin/fastmcp for resource registration patterns
+  
+  - **Code Quality**:
+    * ✅ Both files compile successfully
+    * ✅ All 24 resources now have correct function signatures
+    * ✅ Server should start successfully in Claude Desktop
+  
+  - **Git Commits**:
+    * 7546d8c: Phase 2 implementation (broken)
+    * 9a07016: Fix resource registration (working)
+  
+  - **Status**: Bug fixed, ready for testing in Claude Desktop
+  - **Next**: User testing, then continue to Phase 3 (Sampling)
+
 ### 2025-11-02 (Implementation) - Phase 2 COMPLETE: All 24 Resources Implemented! 🎉🎉
 - **Implemented All 24 Resources in Single Session (Task 2.1 Complete)** ✅
   - **User Request**: "continue" (after Phase 1 completion)
