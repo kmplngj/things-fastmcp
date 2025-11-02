@@ -541,23 +541,20 @@ async def someday_resource(ctx: Optional[Context] = None) -> Dict[str, Any]:
 
 
 async def logbook_resource(
-    limit: int = 100,
-    offset: int = 0,
     ctx: Optional[Context] = None
 ) -> Dict[str, Any]:
     """
-    Completed tasks (logbook) with pagination.
+    Completed tasks (logbook) - returns last 100 items.
     
-    URI: things://todos/logbook?limit=100&offset=0
+    URI: things://todos/logbook
     MIME: application/json
-    
-    Args:
-        limit: Maximum number of items to return (default: 100)
-        offset: Number of items to skip (default: 0)
         
     Returns:
-        Dict with logbook tasks and pagination info
+        Dict with logbook tasks
     """
+    # Default pagination
+    limit = 100
+    offset = 0
     try:
         all_logbook = things.logbook()
         
@@ -565,16 +562,11 @@ async def logbook_resource(
         paginated_items = all_logbook[offset:offset + limit]
         
         result = {
-            "resource_uri": f"things://todos/logbook?limit={limit}&offset={offset}",
+            "resource_uri": "things://todos/logbook",
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "total_count": len(all_logbook),
             "returned_count": len(paginated_items),
-            "pagination": {
-                "limit": limit,
-                "offset": offset,
-                "has_more": (offset + limit) < len(all_logbook),
-                "next_offset": offset + limit if (offset + limit) < len(all_logbook) else None
-            },
+            "note": "Showing last 100 completed items",
             "items": paginated_items
         }
         
@@ -586,7 +578,7 @@ async def logbook_resource(
     except Exception as e:
         return {
             "error": str(e),
-            "resource_uri": f"things://todos/logbook?limit={limit}&offset={offset}",
+            "resource_uri": "things://todos/logbook",
             "timestamp": datetime.now(timezone.utc).isoformat()
         }
 
@@ -876,21 +868,19 @@ async def overdue_resource(ctx: Optional[Context] = None) -> Dict[str, Any]:
 
 
 async def due_soon_resource(
-    days: int = 7,
     ctx: Optional[Context] = None
 ) -> Dict[str, Any]:
     """
-    Items due in the next N days.
+    Items due in the next 7 days.
     
-    URI: things://deadlines/due-soon?days=7
+    URI: things://deadlines/due-soon
     MIME: application/json
-    
-    Args:
-        days: Number of days to look ahead (default: 7)
         
     Returns:
         Dict with items due soon
     """
+    # Default to 7 days
+    days = 7
     try:
         from datetime import date, timedelta
         
@@ -920,7 +910,7 @@ async def due_soon_resource(
         due_soon_items.sort(key=lambda t: t["days_until"])
         
         result = {
-            "resource_uri": f"things://deadlines/due-soon?days={days}",
+            "resource_uri": "things://deadlines/due-soon",
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "days_ahead": days,
             "count": len(due_soon_items),
@@ -935,7 +925,7 @@ async def due_soon_resource(
     except Exception as e:
         return {
             "error": str(e),
-            "resource_uri": f"things://deadlines/due-soon?days={days}",
+            "resource_uri": "things://deadlines/due-soon",
             "timestamp": datetime.now(timezone.utc).isoformat()
         }
 
@@ -945,21 +935,19 @@ async def due_soon_resource(
 # ============================================================================
 
 async def productivity_summary_resource(
-    days: int = 30,
     ctx: Optional[Context] = None
 ) -> Dict[str, Any]:
     """
-    Productivity summary and statistics.
+    Productivity summary and statistics for last 30 days.
     
-    URI: things://analytics/summary?days=30
+    URI: things://analytics/summary
     MIME: application/json
-    
-    Args:
-        days: Number of days to analyze (default: 30)
         
     Returns:
         Dict with productivity metrics
     """
+    # Default to 30 days
+    days = 30
     try:
         from datetime import date, timedelta
         
@@ -1012,7 +1000,7 @@ async def productivity_summary_resource(
         top_tags = sorted(tag_counts.items(), key=lambda x: x[1], reverse=True)[:5]
         
         result = {
-            "resource_uri": f"things://analytics/summary?days={days}",
+            "resource_uri": "things://analytics/summary",
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "period_days": days,
             "metrics": {
@@ -1036,7 +1024,7 @@ async def productivity_summary_resource(
     except Exception as e:
         return {
             "error": str(e),
-            "resource_uri": f"things://analytics/summary?days={days}",
+            "resource_uri": "things://analytics/summary",
             "timestamp": datetime.now(timezone.utc).isoformat()
         }
 
@@ -1136,7 +1124,7 @@ RESOURCE_REGISTRY = {
     "things://todos/logbook": {
         "function": logbook_resource,
         "name": "Logbook",
-        "description": "Completed tasks with pagination",
+        "description": "Completed tasks (last 100 items)",
         "mime_type": "application/json",
         "category": "lists"
     },
@@ -1189,7 +1177,7 @@ RESOURCE_REGISTRY = {
     "things://deadlines/due-soon": {
         "function": due_soon_resource,
         "name": "Due Soon",
-        "description": "Items due in the next N days",
+        "description": "Items due in the next 7 days",
         "mime_type": "application/json",
         "category": "search"
     },
@@ -1198,7 +1186,7 @@ RESOURCE_REGISTRY = {
     "things://analytics/summary": {
         "function": productivity_summary_resource,
         "name": "Productivity Summary",
-        "description": "Productivity metrics and statistics",
+        "description": "Productivity metrics for last 30 days",
         "mime_type": "application/json",
         "category": "analytics"
     },
