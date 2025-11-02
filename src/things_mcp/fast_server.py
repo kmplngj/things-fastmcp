@@ -60,8 +60,9 @@ from .analytics import (
     TagSuggestion,  # type: ignore # noqa: F401
 )
 
-# Import prompts module
+# Import prompts and resources modules
 from . import prompts
+from . import resources
 
 # Load environment variables from .env file
 load_dotenv()
@@ -482,6 +483,15 @@ logger.info("FastMCP middleware configured successfully")
 logger.info("Registering MCP prompts...")
 prompts.register_all_prompts(mcp)
 logger.info(f"Registered {len(prompts.PROMPT_REGISTRY)} prompts across 4 categories")
+
+# ============================================================================
+# REGISTER RESOURCES (v4.0.0 Phase 2)
+# ============================================================================
+
+logger.info("Registering MCP resources...")
+resources.register_all_resources(mcp)
+logger.info(f"Registered {len(resources.RESOURCE_REGISTRY)} resources across 5 categories")
+logger.info("Resource URI scheme: things:// (projects, todos, tags, search, analytics)")
 
 # ============================================================================
 # DYNAMIC TOOL MANAGEMENT (v3.0.0 Phase 2)
