@@ -30,6 +30,13 @@ from .logging_config import setup_logging, get_logger, log_operation_start, log_
 # Import caching
 from .cache import cached, invalidate_caches_for, get_cache_stats, CACHE_TTL
 from .tag_handler import ensure_tags_exist
+from .template_storage import (
+    save_template_sync as save_template,
+    get_template_sync as get_template,
+    list_templates_sync as list_templates,
+    delete_template_sync as delete_template,
+    template_exists_sync as template_exists
+)
 
 # Load environment variables from .env file
 load_dotenv()
@@ -98,6 +105,11 @@ TOOL_ANNOTATIONS: Dict[str, types.ToolAnnotations] = {
     "bulk-tag-todos": MODIFY_ANNOTATIONS,
     "bulk-move-todos": MODIFY_ANNOTATIONS,
     "schedule-assistant": MODIFY_ANNOTATIONS,
+    "create-project-template": ADD_ANNOTATIONS,
+    "list-project-templates": READ_ONLY_ANNOTATIONS,
+    "apply-project-template": ADD_ANNOTATIONS,
+    "update-project-template": UPDATE_ANNOTATIONS,
+    "delete-project-template": MODIFY_ANNOTATIONS,
     "add-project": ADD_ANNOTATIONS,
     "update-todo": UPDATE_ANNOTATIONS,
     "update-project": UPDATE_ANNOTATIONS,
@@ -2325,14 +2337,22 @@ def add_task(
         logger.error(f"Error creating todo: {str(e)}")
         return _error_result(f"Error creating todo: {str(e)}")
 
-@mcp.tool(name="add-todo-interactive", annotations=ADD_ANNOTATIONS)
+@mcp.tool(
+    name="add-todo-interactive",
+    annotations=ADD_ANNOTATIONS,
+    meta={"requires_elicitation": True, "alternative_tool": "add-todo"}
+)
 async def add_todo_interactive(ctx: Context) -> str:
     """
+    ⚠️ REQUIRES ELICITATION SUPPORT - Not currently supported in Claude Desktop
+    
     Create a new todo interactively with step-by-step guidance
     
     This tool uses interactive elicitation to guide you through creating a todo,
     asking for each piece of information step by step. This is especially useful
     when you want guidance on what information to provide.
+    
+    **Alternative:** Use `add-todo` tool instead (provide all parameters directly)
     
     The tool will ask for:
     1. Title (required)
@@ -2340,6 +2360,10 @@ async def add_todo_interactive(ctx: Context) -> str:
     3. When to schedule (optional: today, tomorrow, evening, anytime, someday, or YYYY-MM-DD)
     4. Deadline (optional: YYYY-MM-DD)
     5. Tags (optional: comma-separated list)
+    
+    **Why This May Fail:**
+    This tool requires MCP clients to implement the `elicitation/create` method.
+    Claude Desktop does not currently support this (error: "Method not found").
     """
     try:
         # Ensure Things app is running
@@ -2427,9 +2451,15 @@ async def add_todo_interactive(ctx: Context) -> str:
         logger.error(f"Error in interactive todo creation: {str(e)}")
         return _error_result(f"Error creating todo: {str(e)}")
 
-@mcp.tool(name="bulk-complete-todos", annotations=TOOL_ANNOTATIONS["bulk-complete-todos"])
+@mcp.tool(
+    name="bulk-complete-todos",
+    annotations=TOOL_ANNOTATIONS["bulk-complete-todos"],
+    meta={"requires_elicitation": True, "alternative_tool": "update-todo"}
+)
 async def bulk_complete_todos(ctx: Context) -> str:
     """
+    ⚠️ REQUIRES ELICITATION SUPPORT - Not currently supported in Claude Desktop
+    
     Complete multiple todos at once with interactive preview and confirmation
     
     This tool provides a safe way to batch-complete todos by:
@@ -2438,11 +2468,17 @@ async def bulk_complete_todos(ctx: Context) -> str:
     3. Confirming before making changes
     4. Providing progress updates during execution
     
+    **Alternative:** Use `update-todo` for individual todo completion
+    
     This is useful for:
     - Completing all todos with a specific tag (e.g., "quick-wins")
     - Marking an entire project complete
     - Clearing out inbox items
     - Bulk operations with safety guardrails
+    
+    **Why This May Fail:**
+    This tool requires MCP clients to implement the `elicitation/create` method.
+    Claude Desktop does not currently support this (error: "Method not found").
     """
     try:
         # Ensure Things app is running
@@ -2586,9 +2622,15 @@ async def bulk_complete_todos(ctx: Context) -> str:
         logger.error(f"Error in bulk complete: {str(e)}")
         return _error_result(f"Error completing todos: {str(e)}")
 
-@mcp.tool(name="bulk-schedule-todos", annotations=TOOL_ANNOTATIONS["bulk-schedule-todos"])
+@mcp.tool(
+    name="bulk-schedule-todos",
+    annotations=TOOL_ANNOTATIONS["bulk-schedule-todos"],
+    meta={"requires_elicitation": True, "alternative_tool": "update-todo"}
+)
 async def bulk_schedule_todos(ctx: Context) -> str:
     """
+    ⚠️ REQUIRES ELICITATION SUPPORT - Not currently supported in Claude Desktop
+    
     Schedule multiple todos at once using filters (interactive)
     
     This is an interactive bulk operation that:
@@ -2599,12 +2641,18 @@ async def bulk_schedule_todos(ctx: Context) -> str:
     5. Requires explicit confirmation ("yes")
     6. Executes batch scheduling with progress updates
     
+    **Alternative:** Use `update-todo` with `when` parameter for individual scheduling
+    
     Safety features:
     - Preview before execution (first 10 items shown)
     - Explicit confirmation required
     - 100-item batch limit
     - Progress reporting every 10 items
     - Continues on individual failures
+    
+    **Why This May Fail:**
+    This tool requires MCP clients to implement the `elicitation/create` method.
+    Claude Desktop does not currently support this (error: "Method not found").
     
     Returns:
         Summary of scheduled todos with success/failure counts
@@ -2801,9 +2849,15 @@ async def bulk_schedule_todos(ctx: Context) -> str:
         logger.error(f"Error in bulk schedule: {str(e)}")
         return _error_result(f"Error scheduling todos: {str(e)}")
 
-@mcp.tool(name="bulk-tag-todos", annotations=TOOL_ANNOTATIONS["bulk-tag-todos"])
+@mcp.tool(
+    name="bulk-tag-todos",
+    annotations=TOOL_ANNOTATIONS["bulk-tag-todos"],
+    meta={"requires_elicitation": True, "alternative_tool": "update-todo"}
+)
 async def bulk_tag_todos(ctx: Context) -> str:
     """
+    ⚠️ REQUIRES ELICITATION SUPPORT - Not currently supported in Claude Desktop
+    
     Add or remove tags from multiple todos at once (interactive)
     
     This is an interactive bulk operation that:
@@ -2815,12 +2869,18 @@ async def bulk_tag_todos(ctx: Context) -> str:
     6. Requires explicit confirmation ("yes")
     7. Executes batch tagging with progress updates
     
+    **Alternative:** Use `update-todo` with `tags` parameter for individual tag operations
+    
     Safety features:
     - Preview before execution (first 10 items shown)
     - Explicit confirmation required
     - 100-item batch limit
     - Progress reporting every 10 items
     - Continues on individual failures
+    
+    **Why This May Fail:**
+    This tool requires MCP clients to implement the `elicitation/create` method.
+    Claude Desktop does not currently support this (error: "Method not found").
     
     Returns:
         Summary of tagged todos with success/failure counts
@@ -3015,9 +3075,15 @@ async def bulk_tag_todos(ctx: Context) -> str:
         logger.error(f"Error in bulk tag: {str(e)}")
         return _error_result(f"Error tagging todos: {str(e)}")
 
-@mcp.tool(name="bulk-move-todos", annotations=TOOL_ANNOTATIONS["bulk-move-todos"])
+@mcp.tool(
+    name="bulk-move-todos",
+    annotations=TOOL_ANNOTATIONS["bulk-move-todos"],
+    meta={"requires_elicitation": True, "alternative_tool": "move-item-to-project"}
+)
 async def bulk_move_todos(ctx: Context) -> str:
     """
+    ⚠️ REQUIRES ELICITATION SUPPORT - Not currently supported in Claude Desktop
+    
     Move multiple todos to a different project or area (interactive)
     
     This is an interactive bulk operation that:
@@ -3028,12 +3094,18 @@ async def bulk_move_todos(ctx: Context) -> str:
     5. Requires explicit confirmation ("yes")
     6. Executes batch move with progress updates
     
+    **Alternative:** Use `move-item-to-project` for individual todo moves
+    
     Safety features:
     - Preview before execution (first 10 items shown)
     - Explicit confirmation required
     - 100-item batch limit
     - Progress reporting every 10 items
     - Continues on individual failures
+    
+    **Why This May Fail:**
+    This tool requires MCP clients to implement the `elicitation/create` method.
+    Claude Desktop does not currently support this (error: "Method not found").
     
     Returns:
         Summary of moved todos with success/failure counts
@@ -3224,9 +3296,15 @@ async def bulk_move_todos(ctx: Context) -> str:
         logger.error(f"Error in bulk move: {str(e)}")
         return _error_result(f"Error moving todos: {str(e)}")
 
-@mcp.tool(name="schedule-assistant", annotations=TOOL_ANNOTATIONS["schedule-assistant"])
+@mcp.tool(
+    name="schedule-assistant",
+    annotations=TOOL_ANNOTATIONS["schedule-assistant"],
+    meta={"requires_elicitation": True, "alternative_tool": "update-todo"}
+)
 async def schedule_assistant(ctx: Context) -> str:
     """
+    ⚠️ REQUIRES ELICITATION SUPPORT - Not currently supported in Claude Desktop
+    
     Smart scheduling assistant with natural language support (interactive)
     
     This is an advanced interactive tool that:
@@ -3236,6 +3314,8 @@ async def schedule_assistant(ctx: Context) -> str:
     4. Handles multiple todos at once
     5. Provides conflict warnings if overloading a day
     
+    **Alternative:** Use `update-todo` with `when` parameter (accepts: today, tomorrow, evening, anytime, someday, YYYY-MM-DD)
+    
     Natural language examples:
     - "tomorrow at 2pm"
     - "next Monday"
@@ -3244,6 +3324,10 @@ async def schedule_assistant(ctx: Context) -> str:
     - "today evening" → This Evening
     - "anytime" → Anytime list
     - "someday" → Someday list
+    
+    **Why This May Fail:**
+    This tool requires MCP clients to implement the `elicitation/create` method.
+    Claude Desktop does not currently support this (error: "Method not found").
     
     Returns:
         Summary of scheduled todos with parsed dates
@@ -3894,6 +3978,661 @@ def get_recent(
     except Exception as e:
         logger.error(f"Error getting recent items: {str(e)}")
         return _error_result(f"Error getting recent items: {str(e)}")
+
+# =============================================================================
+# PROJECT TEMPLATE TOOLS
+# =============================================================================
+
+@mcp.tool(
+    name="create-project-template",
+    annotations=TOOL_ANNOTATIONS["create-project-template"],
+    meta={"requires_elicitation": True, "alternative_tool": "add-project"}
+)
+async def create_project_template(ctx: Context) -> str:
+    """
+    ⚠️ REQUIRES ELICITATION SUPPORT - Not currently supported in Claude Desktop
+    
+    Create a reusable project template with interactive guidance
+    
+    This tool helps you save project structures as templates that can be reused later.
+    You'll be guided through specifying:
+    - Template name (for identification)
+    - Project title
+    - Project notes (optional)
+    - Tags (optional)
+    - Area (optional)
+    - Todo items to include (optional)
+    
+    **Alternative:** Use `add-project` to create reference projects that you can copy manually
+    
+    Templates are stored persistently and can be applied later with variable substitution.
+    
+    Example use cases:
+    - "Weekly Review" template with recurring checklist items
+    - "New Client Onboarding" with standard tasks
+    - "Blog Post" with writing workflow steps
+    - "Event Planning" with preparation tasks
+    
+    **Why This May Fail:**
+    This tool requires MCP clients to implement the `elicitation/create` method.
+    Claude Desktop does not currently support this (error: "Method not found").
+    """
+    try:
+        await ctx.info("🎨 Creating a new project template...")
+        
+        # Step 1: Template name
+        result = await ctx.elicit(
+            "What should we call this template? (alphanumeric, hyphens, underscores only)",
+            response_type=str
+        )
+        if result.action != "accept":
+            return "Template creation cancelled"
+        
+        template_name = result.data.strip()
+        if not template_name:
+            return "Error: Template name cannot be empty"
+        
+        # Check if template already exists
+        if template_exists(template_name):
+            result = await ctx.elicit(
+                f"Template '{template_name}' already exists. Overwrite it? (yes/no)",
+                response_type=str
+            )
+            if result.action != "accept" or result.data.lower() not in ["yes", "y"]:
+                return "Template creation cancelled"
+        
+        # Step 2: Project title
+        result = await ctx.elicit(
+            "What is the project title? (you can use {{variables}} for substitution later)",
+            response_type=str
+        )
+        if result.action != "accept":
+            return "Template creation cancelled"
+        
+        project_title = result.data.strip()
+        if not project_title:
+            return "Error: Project title cannot be empty"
+        
+        # Step 3: Project notes (optional)
+        result = await ctx.elicit(
+            "Add project notes? (optional, press Enter to skip)",
+            response_type=str
+        )
+        project_notes = result.data.strip() if result.action == "accept" and result.data else ""
+        
+        # Step 4: Tags (optional)
+        result = await ctx.elicit(
+            "Add tags? (comma-separated, optional, press Enter to skip)",
+            response_type=str
+        )
+        tags_str = result.data.strip() if result.action == "accept" and result.data else ""
+        tags = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
+        
+        # Step 5: Area (optional)
+        result = await ctx.elicit(
+            "Assign to an area? (area name, optional, press Enter to skip)",
+            response_type=str
+        )
+        area_name = result.data.strip() if result.action == "accept" and result.data else ""
+        area_id = None
+        
+        if area_name:
+            # Try to find the area
+            areas = things.areas()
+            matching_area = next((a for a in areas if a.get('title', '').lower() == area_name.lower()), None)
+            if matching_area:
+                area_id = matching_area['uuid']
+                await ctx.info(f"✓ Found area: {matching_area['title']}")
+            else:
+                await ctx.warning(f"Area '{area_name}' not found. Template will be saved without area assignment.")
+        
+        # Step 6: Todo items (optional)
+        result = await ctx.elicit(
+            "Add todo items? Enter one per line (press Enter twice when done, or skip to add none)",
+            response_type=str
+        )
+        todos_str = result.data.strip() if result.action == "accept" and result.data else ""
+        todos = [todo.strip() for todo in todos_str.split("\n") if todo.strip()] if todos_str else []
+        
+        # Build template data
+        template_data = {
+            "title": project_title,
+            "notes": project_notes,
+            "tags": tags,
+            "area_id": area_id,
+            "area_name": area_name if area_name else None,
+            "todos": todos
+        }
+        
+        # Save template
+        await ctx.info(f"💾 Saving template '{template_name}'...")
+        save_template(template_name, template_data)
+        
+        # Build summary
+        summary = f"✓ Successfully created template: {template_name}\n\n"
+        summary += f"Project Title: {project_title}\n"
+        if project_notes:
+            summary += f"Notes: {project_notes[:100]}{'...' if len(project_notes) > 100 else ''}\n"
+        if tags:
+            summary += f"Tags: {', '.join(tags)}\n"
+        if area_name:
+            summary += f"Area: {area_name}\n"
+        if todos:
+            summary += f"Todos: {len(todos)} items\n"
+            for i, todo in enumerate(todos[:5], 1):
+                summary += f"  {i}. {todo}\n"
+            if len(todos) > 5:
+                summary += f"  ... and {len(todos) - 5} more\n"
+        
+        summary += "\nUse 'apply-project-template' to create projects from this template."
+        
+        return summary
+        
+    except Exception as e:
+        logger.error(f"Error creating project template: {str(e)}")
+        return f"Error creating template: {str(e)}"
+
+@mcp.tool(name="list-project-templates", annotations=TOOL_ANNOTATIONS["list-project-templates"])
+def list_project_templates() -> str:
+    """
+    List all saved project templates
+    
+    Shows all templates with their metadata:
+    - Template name
+    - Project title
+    - Number of todos
+    - Tags
+    - Area (if assigned)
+    - Created date
+    - Version
+    
+    Use this to browse available templates before applying them.
+    """
+    try:
+        templates = list_templates()
+        
+        if not templates:
+            return "No project templates found.\n\nUse 'create-project-template' to create your first template."
+        
+        # Build formatted list
+        result = f"📋 Found {len(templates)} project template(s):\n\n"
+        
+        for i, template in enumerate(templates, 1):
+            result += f"{i}. **{template['name']}**\n"
+            result += f"   Title: {template['title']}\n"
+            
+            if template.get('todo_count', 0) > 0:
+                result += f"   Todos: {template['todo_count']} items\n"
+            
+            if template.get('tags'):
+                result += f"   Tags: {', '.join(template['tags'])}\n"
+            
+            if template.get('area_name'):
+                result += f"   Area: {template['area_name']}\n"
+            
+            result += f"   Created: {template.get('created', 'Unknown')}\n"
+            result += f"   Version: {template.get('version', '1.0')}\n"
+            result += "\n"
+        
+        result += "Use 'apply-project-template' to create a project from any of these templates."
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error listing project templates: {str(e)}")
+        return _error_result(f"Error listing templates: {str(e)}")
+
+@mcp.tool(
+    name="apply-project-template",
+    annotations=TOOL_ANNOTATIONS["apply-project-template"],
+    meta={"requires_elicitation": True, "alternative_tool": "add-project"}
+)
+async def apply_project_template(ctx: Context) -> str:
+    """
+    ⚠️ REQUIRES ELICITATION SUPPORT - Not currently supported in Claude Desktop
+    
+    Create a new project from a saved template with variable substitution
+    
+    This tool lets you apply a template to create a new project. You can provide
+    values for any {{variables}} in the template (like {{client_name}} or {{date}}).
+    
+    The tool will:
+    1. Ask which template to use
+    2. Show template details
+    3. Ask for variable values (if template has {{variables}})
+    4. Create the project with all todos
+    5. Return the project UUID for reference
+    
+    **Alternative:** Create reference projects with `add-project` and manually copy their structure
+    
+    Example use cases:
+    - Apply "Weekly Review" template for current week
+    - Use "New Client" template with client name substitution
+    - Create "Event Planning" project with specific event details
+    
+    **Why This May Fail:**
+    This tool requires MCP clients to implement the `elicitation/create` method.
+    Claude Desktop does not currently support this (error: "Method not found").
+    """
+    try:
+        # Ensure Things app is running
+        if not app_state.update_app_state():
+            if not launch_things():
+                return _error_result("Error: Unable to launch Things app")
+        
+        await ctx.info("📋 Applying a project template...")
+        
+        # Step 1: Get template name
+        result = await ctx.elicit(
+            "Which template would you like to apply? (template name)",
+            response_type=str
+        )
+        if result.action != "accept":
+            return "Template application cancelled"
+        
+        template_name = result.data.strip()
+        if not template_name:
+            return _error_result("Template name cannot be empty")
+        
+        # Load template
+        await ctx.info(f"Loading template '{template_name}'...")
+        template_data = get_template(template_name)
+        
+        if not template_data:
+            return _error_result(f"Template '{template_name}' not found. Use 'list-project-templates' to see available templates.")
+        
+        # Extract template fields
+        title_template = template_data.get("title", "Untitled Project")
+        notes_template = template_data.get("notes", "")
+        tags = template_data.get("tags", [])
+        area_id = template_data.get("area_id")
+        todos_templates = template_data.get("todos", [])
+        
+        # Show template preview
+        preview = f"Template: {template_name}\n"
+        preview += f"Title: {title_template}\n"
+        if notes_template:
+            preview += f"Notes: {notes_template[:100]}{'...' if len(notes_template) > 100 else ''}\n"
+        if tags:
+            preview += f"Tags: {', '.join(tags)}\n"
+        if area_id:
+            preview += f"Area: {template_data.get('area_name', 'Assigned')}\n"
+        if todos_templates:
+            preview += f"Todos: {len(todos_templates)} items\n"
+        
+        await ctx.info(preview)
+        
+        # Step 2: Check for variables and get substitutions
+        import re
+        variables = set()
+        
+        # Find all {{variables}} in title, notes, and todos
+        for text in [title_template, notes_template] + todos_templates:
+            if text:
+                variables.update(re.findall(r'\{\{(\w+)\}\}', text))
+        
+        substitutions = {}
+        if variables:
+            await ctx.info(f"This template uses variables: {', '.join(sorted(variables))}")
+            
+            for var in sorted(variables):
+                result = await ctx.elicit(
+                    f"Value for {{{{{var}}}}}? (press Enter to leave as-is)",
+                    response_type=str
+                )
+                if result.action == "accept" and result.data:
+                    substitutions[var] = result.data.strip()
+        
+        # Step 3: Apply substitutions
+        def substitute_vars(text: str) -> str:
+            """Replace {{variables}} with provided values"""
+            if not text:
+                return text
+            result_text = text
+            for var, value in substitutions.items():
+                result_text = result_text.replace(f"{{{{{var}}}}}", value)
+            return result_text
+        
+        final_title = substitute_vars(title_template)
+        final_notes = substitute_vars(notes_template)
+        final_todos = [substitute_vars(todo) for todo in todos_templates]
+        
+        # Step 4: Confirm creation
+        result = await ctx.elicit(
+            f"Create project '{final_title}' with {len(final_todos)} todo(s)? (yes/no)",
+            response_type=str
+        )
+        if result.action != "accept" or result.data.lower() not in ["yes", "y"]:
+            return "Template application cancelled"
+        
+        # Step 5: Create project
+        await ctx.info(f"Creating project: {final_title}")
+        
+        # Build project URL with tags
+        project_url = add_project(
+            title=final_title,
+            notes=final_notes,
+            tags=tags,
+            area_id=area_id,
+            todos=None  # We'll add todos separately for better control
+        )
+        
+        logger.debug(f"Add project URL: {project_url}")
+        success = execute_url(project_url)
+        
+        if not success:
+            return _error_result("Error: Failed to create project")
+        
+        # Wait a moment for project creation
+        import time
+        time.sleep(0.5)
+        
+        # Find the newly created project (it should be the most recent)
+        projects = things.projects()
+        new_project = None
+        
+        # Look for project with matching title (created in last few seconds)
+        for project in projects:
+            if project.get('title') == final_title:
+                new_project = project
+                break
+        
+        if not new_project:
+            await ctx.warning("Project created but couldn't find UUID. Todos may need to be added manually.")
+            project_uuid = None
+        else:
+            project_uuid = new_project['uuid']
+            await ctx.info(f"✓ Project created with UUID: {project_uuid}")
+        
+        # Step 6: Add todos to project
+        if final_todos and project_uuid:
+            await ctx.info(f"Adding {len(final_todos)} todo(s)...")
+            
+            todos_created = 0
+            for i, todo_title in enumerate(final_todos, 1):
+                todo_url = add_todo(
+                    title=todo_title,
+                    list_id=project_uuid,
+                    tags=None,
+                    notes=None,
+                    when=None,
+                    deadline=None,
+                    checklist_items=None,
+                    list_title=None,
+                    heading=None
+                )
+                
+                if execute_url(todo_url):
+                    todos_created += 1
+                    if i % 5 == 0:  # Progress update every 5 todos
+                        await ctx.info(f"Progress: {i}/{len(final_todos)} todos created")
+                else:
+                    logger.warning(f"Failed to create todo: {todo_title}")
+            
+            await ctx.info(f"✓ Created {todos_created}/{len(final_todos)} todos")
+        
+        # Invalidate caches
+        invalidate_caches_for(["get-projects", "get-todos", "get-inbox"])
+        
+        # Build success summary
+        summary = f"✓ Successfully applied template '{template_name}'\n\n"
+        summary += f"Project: {final_title}\n"
+        if project_uuid:
+            summary += f"UUID: {project_uuid}\n"
+        if tags:
+            summary += f"Tags: {', '.join(tags)}\n"
+        if final_todos:
+            summary += f"Todos: {len(final_todos)} items created\n"
+        if substitutions:
+            summary += "\nVariables applied:\n"
+            for var, value in substitutions.items():
+                summary += f"  {var} → {value}\n"
+        
+        return summary
+        
+    except Exception as e:
+        logger.error(f"Error applying project template: {str(e)}")
+        return _error_result(f"Error applying template: {str(e)}")
+
+@mcp.tool(
+    name="update-project-template",
+    annotations=TOOL_ANNOTATIONS["update-project-template"],
+    meta={"requires_elicitation": True, "alternative_tool": "list-project-templates"}
+)
+async def update_project_template(ctx: Context) -> str:
+    """
+    ⚠️ REQUIRES ELICITATION SUPPORT - Not currently supported in Claude Desktop
+    
+    Update an existing project template
+    
+    This tool lets you modify a saved template. You can update:
+    - Project title
+    - Project notes
+    - Tags
+    - Area assignment
+    - Todo items
+    
+    The tool will:
+    1. Ask which template to update
+    2. Show current template details
+    3. Ask which fields to modify
+    4. Save the updated template
+    
+    **Alternative:** Use `list-project-templates` to view, then recreate with `add-project`
+    
+    Use this to refine templates based on experience or changing needs.
+    
+    **Why This May Fail:**
+    This tool requires MCP clients to implement the `elicitation/create` method.
+    Claude Desktop does not currently support this (error: "Method not found").
+    """
+    try:
+        await ctx.info("✏️ Updating a project template...")
+        
+        # Step 1: Get template name
+        result = await ctx.elicit(
+            "Which template would you like to update? (template name)",
+            response_type=str
+        )
+        if result.action != "accept":
+            return "Template update cancelled"
+        
+        template_name = result.data.strip()
+        if not template_name:
+            return _error_result("Template name cannot be empty")
+        
+        # Load existing template
+        await ctx.info(f"Loading template '{template_name}'...")
+        template_data = get_template(template_name)
+        
+        if not template_data:
+            return _error_result(f"Template '{template_name}' not found. Use 'list-project-templates' to see available templates.")
+        
+        # Show current template
+        current = "Current template details:\n"
+        current += f"Title: {template_data.get('title', 'Untitled')}\n"
+        current += f"Notes: {template_data.get('notes', '(none)')[:100]}\n"
+        current += f"Tags: {', '.join(template_data.get('tags', [])) or '(none)'}\n"
+        current += f"Area: {template_data.get('area_name', '(none)')}\n"
+        current += f"Todos: {len(template_data.get('todos', []))} items\n"
+        
+        await ctx.info(current)
+        
+        # Step 2: Update title?
+        result = await ctx.elicit(
+            f"New project title? (current: '{template_data.get('title')}', press Enter to keep)",
+            response_type=str
+        )
+        new_title = result.data.strip() if result.action == "accept" and result.data else None
+        if new_title:
+            template_data['title'] = new_title
+            await ctx.info(f"✓ Title updated to: {new_title}")
+        
+        # Step 3: Update notes?
+        result = await ctx.elicit(
+            "New project notes? (press Enter to keep current, type 'clear' to remove)",
+            response_type=str
+        )
+        if result.action == "accept" and result.data:
+            if result.data.strip().lower() == "clear":
+                template_data['notes'] = ""
+                await ctx.info("✓ Notes cleared")
+            else:
+                template_data['notes'] = result.data.strip()
+                await ctx.info("✓ Notes updated")
+        
+        # Step 4: Update tags?
+        result = await ctx.elicit(
+            "New tags? (comma-separated, press Enter to keep current, type 'clear' to remove)",
+            response_type=str
+        )
+        if result.action == "accept" and result.data:
+            if result.data.strip().lower() == "clear":
+                template_data['tags'] = []
+                await ctx.info("✓ Tags cleared")
+            else:
+                new_tags = [tag.strip() for tag in result.data.split(",") if tag.strip()]
+                template_data['tags'] = new_tags
+                await ctx.info(f"✓ Tags updated to: {', '.join(new_tags)}")
+        
+        # Step 5: Update area?
+        result = await ctx.elicit(
+            "New area? (area name, press Enter to keep current, type 'clear' to remove)",
+            response_type=str
+        )
+        if result.action == "accept" and result.data:
+            if result.data.strip().lower() == "clear":
+                template_data['area_id'] = None
+                template_data['area_name'] = None
+                await ctx.info("✓ Area removed")
+            else:
+                area_name = result.data.strip()
+                areas = things.areas()
+                matching_area = next((a for a in areas if a.get('title', '').lower() == area_name.lower()), None)
+                if matching_area:
+                    template_data['area_id'] = matching_area['uuid']
+                    template_data['area_name'] = matching_area['title']
+                    await ctx.info(f"✓ Area updated to: {matching_area['title']}")
+                else:
+                    await ctx.warning(f"Area '{area_name}' not found. Keeping current area.")
+        
+        # Step 6: Update todos?
+        result = await ctx.elicit(
+            "New todo list? (one per line, press Enter to keep current, type 'clear' to remove all)",
+            response_type=str
+        )
+        if result.action == "accept" and result.data:
+            if result.data.strip().lower() == "clear":
+                template_data['todos'] = []
+                await ctx.info("✓ Todos cleared")
+            else:
+                new_todos = [todo.strip() for todo in result.data.split("\n") if todo.strip()]
+                template_data['todos'] = new_todos
+                await ctx.info(f"✓ Todos updated ({len(new_todos)} items)")
+        
+        # Save updated template
+        await ctx.info(f"💾 Saving updated template '{template_name}'...")
+        save_template(template_name, template_data)
+        
+        # Build summary
+        summary = f"✓ Successfully updated template: {template_name}\n\n"
+        summary += f"Project Title: {template_data['title']}\n"
+        if template_data.get('notes'):
+            summary += f"Notes: {template_data['notes'][:100]}{'...' if len(template_data['notes']) > 100 else ''}\n"
+        if template_data.get('tags'):
+            summary += f"Tags: {', '.join(template_data['tags'])}\n"
+        if template_data.get('area_name'):
+            summary += f"Area: {template_data['area_name']}\n"
+        if template_data.get('todos'):
+            summary += f"Todos: {len(template_data['todos'])} items\n"
+        
+        return summary
+        
+    except Exception as e:
+        logger.error(f"Error updating project template: {str(e)}")
+        return _error_result(f"Error updating template: {str(e)}")
+
+@mcp.tool(
+    name="delete-project-template",
+    annotations=TOOL_ANNOTATIONS["delete-project-template"],
+    meta={"requires_elicitation": True, "alternative_tool": "list-project-templates"}
+)
+async def delete_project_template(ctx: Context) -> str:
+    """
+    ⚠️ REQUIRES ELICITATION SUPPORT - Not currently supported in Claude Desktop
+    
+    Delete a saved project template with confirmation
+    
+    This tool permanently removes a template from storage.
+    
+    The tool will:
+    1. Ask which template to delete
+    2. Show template details
+    3. Require explicit "yes" confirmation
+    4. Delete the template
+    
+    **Alternative:** Templates are stored in ~/.things-fastmcp/templates/ as JSON files
+    
+    Use this to clean up unused or outdated templates.
+    This action cannot be undone.
+    
+    **Why This May Fail:**
+    This tool requires MCP clients to implement the `elicitation/create` method.
+    Claude Desktop does not currently support this (error: "Method not found").
+    """
+    try:
+        await ctx.info("🗑️ Deleting a project template...")
+        
+        # Step 1: Get template name
+        result = await ctx.elicit(
+            "Which template would you like to delete? (template name)",
+            response_type=str
+        )
+        if result.action != "accept":
+            return "Template deletion cancelled"
+        
+        template_name = result.data.strip()
+        if not template_name:
+            return _error_result("Template name cannot be empty")
+        
+        # Load template to show details
+        await ctx.info(f"Loading template '{template_name}'...")
+        template_data = get_template(template_name)
+        
+        if not template_data:
+            return _error_result(f"Template '{template_name}' not found. Use 'list-project-templates' to see available templates.")
+        
+        # Show template details before deletion
+        details = f"Template to delete: {template_name}\n"
+        details += f"Title: {template_data.get('title', 'Untitled')}\n"
+        details += f"Todos: {len(template_data.get('todos', []))} items\n"
+        if template_data.get('tags'):
+            details += f"Tags: {', '.join(template_data['tags'])}\n"
+        
+        await ctx.warning(details)
+        await ctx.warning("⚠️ This action cannot be undone!")
+        
+        # Step 2: Require explicit confirmation
+        result = await ctx.elicit(
+            "Type 'yes' to confirm deletion:",
+            response_type=str
+        )
+        
+        if result.action != "accept" or result.data.lower() != "yes":
+            return "Template deletion cancelled"
+        
+        # Delete template
+        await ctx.info(f"Deleting template '{template_name}'...")
+        deleted = delete_template(template_name)
+        
+        if deleted:
+            return f"✓ Successfully deleted template: {template_name}"
+        else:
+            return _error_result(f"Failed to delete template '{template_name}'")
+        
+    except Exception as e:
+        logger.error(f"Error deleting project template: {str(e)}")
+        return _error_result(f"Error deleting template: {str(e)}")
 
 @mcp.tool(name="get-cache-stats", annotations=TOOL_ANNOTATIONS["get-cache-stats"])
 def get_cache_statistics() -> str:
