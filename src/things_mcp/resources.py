@@ -37,7 +37,7 @@ def init_resources(fastmcp_instance: FastMCP) -> None:
 # CATEGORY 1: HIERARCHICAL STRUCTURE RESOURCES
 # ============================================================================
 
-async def projects_list_resource(ctx: Optional[Context] = None) -> Dict[str, Any]:
+async def projects_list_resource() -> Dict[str, Any]:
     """
     Complete list of all projects in Things 3.
     
@@ -70,9 +70,6 @@ async def projects_list_resource(ctx: Optional[Context] = None) -> Dict[str, Any
                 for p in projects
             ]
         }
-        
-        if ctx:
-            await ctx.info(f"Returned {len(projects)} projects")
         
         return result
         
@@ -178,7 +175,7 @@ async def project_todos_resource(
         }
 
 
-async def areas_list_resource(ctx: Optional[Context] = None) -> Dict[str, Any]:
+async def areas_list_resource() -> Dict[str, Any]:
     """
     Complete list of all areas in Things 3.
     
@@ -205,9 +202,6 @@ async def areas_list_resource(ctx: Optional[Context] = None) -> Dict[str, Any]:
                 for a in areas
             ]
         }
-        
-        if ctx:
-            await ctx.info(f"Returned {len(areas)} areas")
         
         return result
         
@@ -267,7 +261,7 @@ async def area_info_resource(
         }
 
 
-async def tags_list_resource(ctx: Optional[Context] = None) -> Dict[str, Any]:
+async def tags_list_resource() -> Dict[str, Any]:
     """
     Complete list of all tags in Things 3.
     
@@ -305,9 +299,6 @@ async def tags_list_resource(ctx: Optional[Context] = None) -> Dict[str, Any]:
             "count": len(tags_with_stats),
             "tags": tags_with_stats
         }
-        
-        if ctx:
-            await ctx.info(f"Returned {len(tags_with_stats)} tags with usage statistics")
         
         return result
         
@@ -375,7 +366,7 @@ async def tag_items_resource(
 # CATEGORY 2: TODO LISTS RESOURCES
 # ============================================================================
 
-async def inbox_resource(ctx: Optional[Context] = None) -> Dict[str, Any]:
+async def inbox_resource() -> Dict[str, Any]:
     """
     All items in the inbox.
     
@@ -395,9 +386,6 @@ async def inbox_resource(ctx: Optional[Context] = None) -> Dict[str, Any]:
             "items": inbox_items
         }
         
-        if ctx:
-            await ctx.info(f"Returned {len(inbox_items)} inbox items")
-        
         return result
         
     except Exception as e:
@@ -408,7 +396,7 @@ async def inbox_resource(ctx: Optional[Context] = None) -> Dict[str, Any]:
         }
 
 
-async def today_resource(ctx: Optional[Context] = None) -> Dict[str, Any]:
+async def today_resource() -> Dict[str, Any]:
     """
     All tasks scheduled for today.
     
@@ -428,9 +416,6 @@ async def today_resource(ctx: Optional[Context] = None) -> Dict[str, Any]:
             "items": today_items
         }
         
-        if ctx:
-            await ctx.info(f"Returned {len(today_items)} tasks for today")
-        
         return result
         
     except Exception as e:
@@ -441,7 +426,7 @@ async def today_resource(ctx: Optional[Context] = None) -> Dict[str, Any]:
         }
 
 
-async def upcoming_resource(ctx: Optional[Context] = None) -> Dict[str, Any]:
+async def upcoming_resource() -> Dict[str, Any]:
     """
     All tasks scheduled for upcoming days.
     
@@ -461,9 +446,6 @@ async def upcoming_resource(ctx: Optional[Context] = None) -> Dict[str, Any]:
             "items": upcoming_items
         }
         
-        if ctx:
-            await ctx.info(f"Returned {len(upcoming_items)} upcoming tasks")
-        
         return result
         
     except Exception as e:
@@ -474,7 +456,7 @@ async def upcoming_resource(ctx: Optional[Context] = None) -> Dict[str, Any]:
         }
 
 
-async def anytime_resource(ctx: Optional[Context] = None) -> Dict[str, Any]:
+async def anytime_resource() -> Dict[str, Any]:
     """
     All tasks in the Anytime list.
     
@@ -494,9 +476,6 @@ async def anytime_resource(ctx: Optional[Context] = None) -> Dict[str, Any]:
             "items": anytime_items
         }
         
-        if ctx:
-            await ctx.info(f"Returned {len(anytime_items)} anytime tasks")
-        
         return result
         
     except Exception as e:
@@ -507,7 +486,7 @@ async def anytime_resource(ctx: Optional[Context] = None) -> Dict[str, Any]:
         }
 
 
-async def someday_resource(ctx: Optional[Context] = None) -> Dict[str, Any]:
+async def someday_resource() -> Dict[str, Any]:
     """
     All tasks in the Someday list.
     
@@ -527,9 +506,6 @@ async def someday_resource(ctx: Optional[Context] = None) -> Dict[str, Any]:
             "items": someday_items
         }
         
-        if ctx:
-            await ctx.info(f"Returned {len(someday_items)} someday tasks")
-        
         return result
         
     except Exception as e:
@@ -540,9 +516,7 @@ async def someday_resource(ctx: Optional[Context] = None) -> Dict[str, Any]:
         }
 
 
-async def logbook_resource(
-    ctx: Optional[Context] = None
-) -> Dict[str, Any]:
+async def logbook_resource() -> Dict[str, Any]:
     """
     Completed tasks (logbook) - returns last 100 items.
     
@@ -569,9 +543,6 @@ async def logbook_resource(
             "note": "Showing last 100 completed items",
             "items": paginated_items
         }
-        
-        if ctx:
-            await ctx.info(f"Returned {len(paginated_items)}/{len(all_logbook)} logbook items")
         
         return result
         
@@ -809,9 +780,9 @@ async def search_resource(
         }
 
 
-async def overdue_resource(ctx: Optional[Context] = None) -> Dict[str, Any]:
+async def overdue_resource() -> Dict[str, Any]:
     """
-    All overdue items.
+    All items with past deadlines.
     
     URI: things://deadlines/overdue
     MIME: application/json
@@ -854,9 +825,6 @@ async def overdue_resource(ctx: Optional[Context] = None) -> Dict[str, Any]:
             "items": overdue_items
         }
         
-        if ctx:
-            await ctx.info(f"Found {len(overdue_items)} overdue items")
-        
         return result
         
     except Exception as e:
@@ -867,9 +835,7 @@ async def overdue_resource(ctx: Optional[Context] = None) -> Dict[str, Any]:
         }
 
 
-async def due_soon_resource(
-    ctx: Optional[Context] = None
-) -> Dict[str, Any]:
+async def due_soon_resource() -> Dict[str, Any]:
     """
     Items due in the next 7 days.
     
@@ -917,9 +883,6 @@ async def due_soon_resource(
             "items": due_soon_items
         }
         
-        if ctx:
-            await ctx.info(f"Found {len(due_soon_items)} items due in next {days} days")
-        
         return result
         
     except Exception as e:
@@ -934,9 +897,7 @@ async def due_soon_resource(
 # CATEGORY 5: ANALYTICS RESOURCES
 # ============================================================================
 
-async def productivity_summary_resource(
-    ctx: Optional[Context] = None
-) -> Dict[str, Any]:
+async def productivity_summary_resource() -> Dict[str, Any]:
     """
     Productivity summary and statistics for last 30 days.
     
@@ -1015,9 +976,6 @@ async def productivity_summary_resource(
             "top_tags": [{"tag": tag, "count": count} for tag, count in top_tags],
             "summary": f"Completed {len(completed_in_period)} tasks in {days} days ({round(completion_rate, 1)}% completion rate)"
         }
-        
-        if ctx:
-            await ctx.info(f"Generated productivity summary for last {days} days")
         
         return result
         
