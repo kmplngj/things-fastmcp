@@ -27,6 +27,76 @@ This file tracks the agent's thoughts, ideas, and work flow for the `things-fast
 - Run `ruff check .` and `pytest` after modifications.
 
 ## Log
+### 2025-11-03 (Bug Fix) - Added list_id and list_title Parameters to update-todo Tool
+- **Fixed Pydantic Validation Error for update-todo** ✅
+  - **User Report**: Claude Desktop error: `Unexpected keyword argument [type=unexpected_keyword_argument, input_value='Music', input_type=str]`
+  - **Log Evidence**: `update-todo` called with `list_title="Music"` parameter (line 4 in Claude logs)
+  - **Root Cause**: `update-todo` tool missing `list_id` and `list_title` parameters that `add-todo` already has
+  - **Inconsistency**: API design flaw - `add-todo` supports `list_id`/`list_title` but `update-todo` did not
+  
+  - **Investigation Timeline**:
+    1. Checked Claude Desktop logs → Found `list_title` parameter in failed call
+    2. Verified `update-todo` function signature → No `list_id` or `list_title` parameters
+    3. Checked `add-todo` signature → Has both `list_id` and `list_title` (line 3279)
+    4. Verified `url_scheme.update_todo()` → Already supports `list_id` parameter (line 302)
+    5. Confirmed: Missing parameter in MCP tool, not URL scheme layer
+  
+  - **Fix Implemented**:
+    * Added `list_id: Optional[str] = None` parameter to `update_task()` function (line 4676)
+    * Added `list_title: Optional[str] = None` parameter to `update_task()` function (line 4677)
+    * Added resolution logic to convert `list_title` → `list_id`:
+      - Searches projects first (case-insensitive match)
+      - Falls back to areas if not found in projects
+      - Logs warning if title doesn't match any project/area
+    * Updated docstring with new parameters and examples
+    * Passed `list_id` to `url_scheme.update_todo()` function call
+  
+  - **Code Changes**:
+    * File: `src/things_mcp/fast_server.py`
+    * Lines 4669-4730: Updated function signature and docstring
+    * Lines 4730-4788: Added list_title resolution logic (+21 lines)
+    * Pattern: Reused same resolution approach as `add-todo` tool
+  
+  - **Examples Added to Docstring**:
+    ```python
+    # Move to project and update tags
+    update_todo(id="ABC123", list_title="Work", tags=["urgent"])
+    
+    # Move to project by UUID
+    update_todo(id="ABC123", list_id="PROJECT-UUID")
+    ```
+  
+  - **Verification**:
+    * ✅ Code compiles successfully (python3 -m py_compile)
+    * ✅ Server starts successfully (FastMCP 2.13.0.2 banner displayed)
+    * ✅ No errors or warnings in startup logs
+    * ✅ API consistency restored between add-todo and update-todo
+  
+  - **Technical Details**:
+    * Resolution logic runs before URL construction
+    * Case-insensitive title matching for better UX
+    * Falls through to areas if not found in projects
+    * Warning logged but operation continues if title not found
+    * URL scheme already supported `list-id` parameter (no changes needed)
+  
+  - **Impact**:
+    * ✅ Claude Desktop can now move todos during update operations
+    * ✅ API consistency restored (add-todo and update-todo now symmetrical)
+    * ✅ Users don't need separate `move-item-to-project` call for simple cases
+    * ✅ Backward compatible (new parameters optional)
+  
+  - **User Workflow Fixed**:
+    * Before: `update-todo` with `list_title` → Error → Manual `move-item-to-project` call
+    * After: `update-todo` with `list_title` → Success (move + update in one call)
+  
+  - **Alternative Approach Considered**:
+    * Could have removed `list_title` from `add-todo` (breaking change)
+    * Chose to add to `update-todo` instead (non-breaking enhancement)
+    * Maintains API consistency and improves UX
+  
+  - **Git Commit**: Pending (fast_server.py changes)
+  - **Status**: Bug fixed, ready for Claude Desktop testing
+
 ### 2025-11-03 (Status Check) - Phase 3 ALREADY COMPLETE! 🎉
 - **Discovered All 9 Analytics Tools Already Implemented** ✅
   - **User Question**: "which prompt would test the sampling?" → Led to discovery

@@ -4674,6 +4674,8 @@ def update_task(
     when: Optional[str] = None,
     deadline: Optional[str] = None,
     tags: Optional[Union[List[str], str]] = None,
+    list_id: Optional[str] = None,
+    list_title: Optional[str] = None,
     completed: Optional[bool] = None,
     canceled: Optional[bool] = None
 ) -> str:
@@ -4701,6 +4703,8 @@ def update_task(
                  - 'tomorrow': Tomorrow's date
                  - Empty string: Clear deadline
         tags: New tags (replaces existing tags). Missing tags will be created automatically.
+        list_id: ID of project/area to move todo to
+        list_title: Title of project/area to move todo to (alternative to list_id)
         completed: Set to True to mark as completed
         canceled: Set to True to mark as canceled
     
@@ -4713,6 +4717,9 @@ def update_task(
         
         # Update multiple fields at once
         update_todo(id="ABC123", when="tomorrow", deadline="2025-12-15", tags=["urgent", "work"])
+        
+        # Move to project and update tags
+        update_todo(id="ABC123", list_title="Work", tags=["urgent"])
         
         # Complete a todo
         update_todo(id="ABC123", completed=True)
@@ -4739,6 +4746,27 @@ def update_task(
         if tags and isinstance(tags, list):
             ensure_tags_exist(tags)
 
+        # Resolve list_title to list_id if provided
+        resolved_list_id = list_id
+        if list_title and not list_id:
+            # Try to find project or area with this title
+            projects = things.projects()
+            for project in projects:
+                if project.get('title', '').lower() == list_title.lower():
+                    resolved_list_id = project.get('uuid')
+                    break
+            
+            # If not found in projects, check areas
+            if not resolved_list_id:
+                areas = things.areas()
+                for area in areas:
+                    if area.get('title', '').lower() == list_title.lower():
+                        resolved_list_id = area.get('uuid')
+                        break
+            
+            if not resolved_list_id:
+                logger.warning(f"Could not find project or area with title: {list_title}")
+
         # Build the update_todo URL command and execute it
         url = update_todo(
             id=id,
@@ -4747,6 +4775,7 @@ def update_task(
             when=when,
             deadline=deadline,
             tags=tags,
+            list_id=resolved_list_id,
             completed=completed,
             canceled=canceled
         )
