@@ -4801,6 +4801,8 @@ def update_existing_project(
     when: Optional[str] = None,
     deadline: Optional[str] = None,
     tags: Optional[Union[List[str], str]] = None,
+    area_id: Optional[str] = None,
+    area_title: Optional[str] = None,
     completed: Optional[bool] = None,
     canceled: Optional[bool] = None
 ) -> str:
@@ -4814,8 +4816,17 @@ def update_existing_project(
         when: New schedule
         deadline: New deadline
         tags: New tags
+        area_id: ID of area to move project to
+        area_title: Title of area to move project to (alternative to area_id)
         completed: Mark as completed
         canceled: Mark as canceled
+    
+    Examples:
+        # Move project to area and update deadline
+        update_project(id="ABC123", area_title="Work", deadline="2025-12-31")
+        
+        # Move project to area by UUID
+        update_project(id="ABC123", area_id="AREA-UUID")
     """
     try:
         # Ensure Things app is running
@@ -4831,6 +4842,19 @@ def update_existing_project(
             except json.JSONDecodeError:
                 tags = [tag.strip() for tag in tags.split(",") if tag.strip()]
 
+        # Resolve area_title to area_id if provided
+        resolved_area_id = area_id
+        if area_title and not area_id:
+            # Try to find area with this title
+            areas = things.areas()
+            for area in areas:
+                if area.get('title', '').lower() == area_title.lower():
+                    resolved_area_id = area.get('uuid')
+                    break
+            
+            if not resolved_area_id:
+                logger.warning(f"Could not find area with title: {area_title}")
+
         # Build the update_project URL command and execute it
         url = update_project(
             id=id,
@@ -4839,6 +4863,7 @@ def update_existing_project(
             when=when,
             deadline=deadline,
             tags=tags if isinstance(tags, list) else None,
+            area_id=resolved_area_id,
             completed=completed,
             canceled=canceled
         )

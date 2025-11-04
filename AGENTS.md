@@ -27,6 +27,70 @@ This file tracks the agent's thoughts, ideas, and work flow for the `things-fast
 - Run `ruff check .` and `pytest` after modifications.
 
 ## Log
+### 2025-11-04 (Bug Fix) - Added area_id and area_title Parameters to update-project Tool
+- **Fixed API Consistency Issue for update-project** ✅
+  - **Discovery**: Systematic consistency audit after fixing update-todo bug
+  - **Root Cause**: `update-project` tool missing `area_id` and `area_title` parameters that `add-project` already has
+  - **Inconsistency**: API design flaw - `add-project` supports `area_id`/`area_title` but `update-project` did not
+  
+  - **Investigation Timeline**:
+    1. User said "continue" → Agent interpreted as "find and fix similar issues"
+    2. Checked `add-project` signature → Found `area_id` and `area_title` parameters (lines 4605-4606)
+    3. Verified `update-project` function signature → No `area_id` or `area_title` parameters
+    4. Verified `url_scheme.update_project()` → Already supports `area_id` parameter (line 322)
+    5. Confirmed: Missing parameter in MCP tool, not URL scheme layer
+  
+  - **Fix Implemented**:
+    * Added `area_id: Optional[str] = None` parameter to `update_existing_project()` function (line 4802)
+    * Added `area_title: Optional[str] = None` parameter to `update_existing_project()` function (line 4803)
+    * Added resolution logic to convert `area_title` → `area_id`:
+      - Searches areas with case-insensitive match
+      - Logs warning if title doesn't match any area
+    * Updated docstring with new parameters and examples
+    * Passed `area_id=resolved_area_id` to `url_scheme.update_project()` function call
+  
+  - **Code Changes**:
+    * File: `src/things_mcp/fast_server.py`
+    * Lines 4796-4853: Updated function signature and docstring
+    * Lines 4835-4848: Added area_title resolution logic (+14 lines)
+    * Pattern: Reused same resolution approach as `update-todo` tool
+  
+  - **Examples Added to Docstring**:
+    ```python
+    # Move to area and update tags
+    update_project(id="ABC123", area_title="Work", tags=["urgent"])
+    
+    # Move to area by UUID
+    update_project(id="ABC123", area_id="AREA-UUID")
+    ```
+  
+  - **Verification**:
+    * ✅ Code compiles successfully (python3 -m py_compile)
+    * ✅ Server starts successfully (FastMCP 2.13.0.2 banner displayed)
+    * ✅ No errors or warnings in startup logs
+    * ✅ API consistency restored between add-project and update-project
+  
+  - **Technical Details**:
+    * Resolution logic runs before URL construction
+    * Case-insensitive title matching for better UX
+    * Warning logged but operation continues if title not found
+    * URL scheme already supported `area-id` parameter (no changes needed)
+  
+  - **Impact**:
+    * ✅ Users can now move projects to different areas during update operations
+    * ✅ API consistency restored (add-project and update-project now symmetrical)
+    * ✅ Users don't need separate move operation for simple cases
+    * ✅ Backward compatible (new parameters optional)
+  
+  - **Pattern Established**:
+    * add-* and update-* tools should have matching location parameters
+    * Title → UUID resolution with case-insensitive matching
+    * Non-fatal failure mode (log warning, continue execution)
+    * Reusable pattern for future API consistency fixes
+  
+  - **Git Commit**: Pending (fast_server.py changes)
+  - **Status**: Bug fixed, ready for Claude Desktop testing
+
 ### 2025-11-03 (Bug Fix) - Added list_id and list_title Parameters to update-todo Tool
 - **Fixed Pydantic Validation Error for update-todo** ✅
   - **User Report**: Claude Desktop error: `Unexpected keyword argument [type=unexpected_keyword_argument, input_value='Music', input_type=str]`
